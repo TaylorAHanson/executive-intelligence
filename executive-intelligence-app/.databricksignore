@@ -1,0 +1,31 @@
+# What NOT to upload when `databricks bundle deploy` syncs this directory.
+#
+# `dist/` is deliberately absent: the built frontend MUST be uploaded, because
+# FastAPI serves it in production. Run `npm run build` before deploying.
+
+# Python
+__pycache__/
+*.pyc
+server/venv/
+venv/
+
+# Secrets — these must never reach the workspace
+.env
+.env.*
+
+# Node — deps are not used at runtime; only the built bundle is
+node_modules/
+
+# Local dev artifacts
+*.log
+.pytest_cache/
+tests/
+
+# Git / IDE / OS
+.git/
+.gitignore
+.databricksignore
+.vscode/
+.idea/
+.DS_Store
+**/.DS_Store

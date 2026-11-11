@@ -1,0 +1,21 @@
+# Backend dependencies. Frontend deps live in package.json.
+#
+# A deployed Databricks App installs EXACTLY what is listed here. A package that
+# only arrives transitively in your local venv will be missing in production, so
+# add anything you import directly, even if it already works locally.
+
+fastapi
+uvicorn[standard]
+pydantic
+
+# The Databricks SDK. Used for both on-behalf-of (user) and service principal
+# auth, and for SQL Statement Execution.
+databricks-sdk>=0.56.0
+
+# HTTP client for calls to the agent app (services/agent.py).
+requests
+
+# Postgres driver, for Lakebase. The `-binary` build ships a compiled libpq, so
+# there is no system dependency to install; plain `psycopg2` would need pg_config
+# and a compiler in the build image.
+psycopg2-binary

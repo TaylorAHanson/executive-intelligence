@@ -1,0 +1,25 @@
+# Line endings.
+#
+# Git on Windows is often configured with core.autocrlf=true, which rewrites
+# checked-out files to CRLF. For a shell script that is fatal rather than
+# cosmetic: bash reads the CR as part of the last token on every line and fails
+# with errors like `$'\r': command not found`, or silently mis-parses. Pinning
+# LF here means a Windows clone gets a runnable dev.sh regardless of the user's
+# global git config.
+#
+# The same applies to .env, which the script sources, and to requirements.txt,
+# where a trailing CR becomes part of the package name pip looks up.
+
+* text=auto
+
+*.sh text eol=lf
+*.py text eol=lf
+*.env text eol=lf
+.env.example text eol=lf
+requirements.txt text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Windows-only helpers, if you ever add one, must keep CRLF to be runnable.
+*.bat text eol=crlf
+*.cmd text eol=crlf

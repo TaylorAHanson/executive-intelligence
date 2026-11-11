@@ -1,0 +1,23 @@
+schema_version = 1
+
+[agent]
+framework = "langgraph"
+server = "agentbricks"
+deployment_name = "exec-intel-agent"
+
+[memory_store]
+name = "exec-intel-agent-memory"
+
+[session_store]
+name = "exec-intel-agent-sessions"
+
+[tracing]
+experiment_name = "/Shared/agentbricks_traces/executive-intelligence-agent-uc"
+[[tools]]
+id = "exec_data"
+auth = "app"
+source = {kind = "genie_agent", space_id = "01f1de078f2016edb763e4eaeb6a3acc"}
+[[tools]]
+id = "ci_data"
+auth = "app"
+source = {kind = "genie_agent", space_id = "01f1de12ab881e8c979ea033bd36c8ca"}

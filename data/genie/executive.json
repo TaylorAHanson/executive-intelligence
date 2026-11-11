@@ -1,0 +1,39 @@
+{
+  "title": "Executive Insights data",
+  "description": "Customers, shipments, recognized revenue, and design wins: the contract views behind the Executive Insights dashboard (data/contract.md).",
+  "tables": ["v_customers", "v_shipments", "v_revenue_monthly", "v_design_wins"],
+  "instructions": [
+    "These views are the same data the Executive Insights dashboard shows. Use the definitions below so answers match the dashboard.",
+    "Revenue means recognized revenue: SUM(revenue_usd) from v_revenue_monthly. Use v_shipments.revenue_usd only when the question asks for invoiced or shipped value.",
+    "OTIF (on time in full) is AVG(CAST(on_time AND in_full AS INT)) over v_shipments, reported as a percentage.",
+    "Design-win conversion (win rate) is won / (won + lost) over v_design_wins rows whose decided_date falls in the period. status values are lowercase: won, lost, open. Open opportunities have a NULL decided_date.",
+    "Periods are whole months and half-open: a period from M1 to M2 covers ship_date, month, or decided_date >= the first day of M1 and < the first day of the month after M2. When no period is given, use the last 12 complete months: >= add_months(trunc(current_date(), 'MM'), -12) and < trunc(current_date(), 'MM'). Never include the current partial month unless asked; it makes revenue look like a drop.",
+    "Growth compares a period with the period of equal length immediately before it.",
+    "A customer's health is 'At risk' when OTIF < 0.85 or revenue growth < -10%, 'Watch' when OTIF < 0.92 or growth < 0, and 'Healthy' otherwise. Growth here is the period's revenue against the prior period's.",
+    "Join every view to v_customers on customer_id for region, segment, tier, and customer_name. Filter regions on v_customers.region."
+  ],
+  "examples": [
+    {
+      "question": "What was revenue by region over the last 12 complete months?",
+      "sql": "SELECT c.region, SUM(r.revenue_usd) AS revenue_usd\nFROM ${catalog}.${schema}.v_revenue_monthly r\nJOIN ${catalog}.${schema}.v_customers c USING (customer_id)\nWHERE r.month >= add_months(trunc(current_date(), 'MM'), -12)\n  AND r.month < trunc(current_date(), 'MM')\nGROUP BY c.region\nORDER BY revenue_usd DESC"
+    },
+    {
+      "question": "What is OTIF by month for the last 12 complete months?",
+      "sql": "SELECT trunc(s.ship_date, 'MM') AS month, AVG(CAST(s.on_time AND s.in_full AS INT)) AS otif\nFROM ${catalog}.${schema}.v_shipments s\nWHERE s.ship_date >= add_months(trunc(current_date(), 'MM'), -12)\n  AND s.ship_date < trunc(current_date(), 'MM')\nGROUP BY 1\nORDER BY 1"
+    },
+    {
+      "question": "What is the design-win conversion rate by segment over the last 12 complete months?",
+      "sql": "SELECT d.segment,\n  COUNT_IF(d.status = 'won') / NULLIF(COUNT_IF(d.status IN ('won', 'lost')), 0) AS win_rate\nFROM ${catalog}.${schema}.v_design_wins d\nWHERE d.decided_date >= add_months(trunc(current_date(), 'MM'), -12)\n  AND d.decided_date < trunc(current_date(), 'MM')\nGROUP BY d.segment\nORDER BY win_rate DESC"
+    },
+    {
+      "question": "Which customers' OTIF fell the most over the last 6 complete months compared with the 6 before?",
+      "sql": "WITH s AS (\n  SELECT customer_id,\n    AVG(CASE WHEN ship_date >= add_months(trunc(current_date(), 'MM'), -6) THEN CAST(on_time AND in_full AS INT) END) AS otif_recent,\n    AVG(CASE WHEN ship_date < add_months(trunc(current_date(), 'MM'), -6) THEN CAST(on_time AND in_full AS INT) END) AS otif_before\n  FROM ${catalog}.${schema}.v_shipments\n  WHERE ship_date >= add_months(trunc(current_date(), 'MM'), -12)\n    AND ship_date < trunc(current_date(), 'MM')\n  GROUP BY customer_id\n)\nSELECT c.customer_name, c.region, s.otif_before, s.otif_recent, s.otif_recent - s.otif_before AS change\nFROM s JOIN ${catalog}.${schema}.v_customers c USING (customer_id)\nORDER BY change\nLIMIT 10"
+    }
+  ],
+  "sample_questions": [
+    "Which customers are at risk, and why?",
+    "Which region grew fastest over the last 12 complete months?",
+    "How does OTIF for Top 10 accounts compare with the rest?",
+    "Which segments have the most open design-win pipeline?"
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "title": "Customer Intelligence data",
+  "description": "The top-10 accounts' revenue, plan and forecast, pipeline, contracts, device footprint, market and account signals, and briefing insights: the contract views behind Customer Intelligence (data/contract.md). In dev workspaces every row is synthetic.",
+  "tables": [
+    "v_customers",
+    "v_revenue_monthly",
+    "v_revenue_outlook",
+    "v_pipeline",
+    "v_contracts",
+    "v_device_footprint",
+    "v_customer_signals",
+    "v_insights"
+  ],
+  "instructions": [
+    "These views are the data behind the Customer Intelligence briefing. Use the definitions below so answers match it.",
+    "The top 10 are the rows of v_customers with tier = 'Top 10'. Join every view to v_customers on customer_id for customer_name, region, and segment.",
+    "Revenue is SUM(revenue_usd) from v_revenue_monthly. Plan attainment is that revenue divided by SUM(plan_usd) from v_revenue_outlook over the same customers and months.",
+    "Periods are whole months and half-open. When no period is given, use the last 12 complete months: month >= add_months(trunc(current_date(), 'MM'), -12) and month < trunc(current_date(), 'MM'). Never include the current partial month in actual revenue.",
+    "Next quarter is the calendar quarter after the current one: month >= add_months(trunc(current_date(), 'QUARTER'), 3) and month < add_months(trunc(current_date(), 'QUARTER'), 6). commit_usd and best_case_usd are forecasts and are NULL for past months. The gap to plan is SUM(plan_usd) - SUM(commit_usd) over those months.",
+    "Device share is SUM(device_models_with_us) / SUM(device_models) from v_device_footprint for one quarter. Compare the latest quarter (MAX(quarter)) with the quarter four quarters earlier (add_months(latest, -12)).",
+    "Lead-to-win conversion is the count of stage = 'Closed Won' divided by the count of stage IN ('Closed Won', 'Closed Lost', 'Disqualified'), over v_pipeline rows whose close_date falls in the period. Open opportunities have stage 'Lead', 'Qualified', 'Proposal', or 'Commit'. Leads are opportunities counted by created_date. amount_usd is the first-year revenue the opportunity would add if won.",
+    "An account is at risk when it has a v_customer_signals row with direction = 'risk' and published_date >= date_sub(current_date(), 120).",
+    "v_customer_signals rows are market and account intelligence already reduced to a theme. When citing one, give its headline, source_name, and published_date. Never present a signal's summary as a fact about the customer without its source.",
+    "v_insights holds the briefing's narrative. scope = 'portfolio' is the top-10 briefing; any other scope is a customer_id. chapter is headline, know, measure, anticipate, or act; act rows are recommendations with title, cause, effect, action, and owner."
+  ],
+  "examples": [
+    {
+      "question": "What themes are the top 10 focused on, and which accounts share each?",
+      "sql": "SELECT s.theme, s.direction, COUNT(DISTINCT s.customer_id) AS accounts,\n  concat_ws(', ', sort_array(collect_set(c.customer_name))) AS account_names\nFROM ${catalog}.${schema}.v_customer_signals s\nJOIN ${catalog}.${schema}.v_customers c USING (customer_id)\nWHERE c.tier = 'Top 10'\nGROUP BY s.theme, s.direction\nORDER BY accounts DESC"
+    },
+    {
+      "question": "What is next quarter's commit against plan for each top-10 account?",
+      "sql": "SELECT c.customer_name, SUM(o.plan_usd) AS plan_usd, SUM(o.commit_usd) AS commit_usd,\n  SUM(o.best_case_usd) AS best_case_usd, SUM(o.plan_usd) - SUM(o.commit_usd) AS gap_to_plan_usd\nFROM ${catalog}.${schema}.v_revenue_outlook o\nJOIN ${catalog}.${schema}.v_customers c USING (customer_id)\nWHERE c.tier = 'Top 10'\n  AND o.month >= add_months(trunc(current_date(), 'QUARTER'), 3)\n  AND o.month < add_months(trunc(current_date(), 'QUARTER'), 6)\nGROUP BY c.customer_name\nORDER BY gap_to_plan_usd DESC"
+    },
+    {
+      "question": "How has each top-10 account's device share changed over the last year?",
+      "sql": "WITH latest AS (SELECT MAX(quarter) AS q FROM ${catalog}.${schema}.v_device_footprint)\nSELECT c.customer_name,\n  SUM(CASE WHEN f.quarter = l.q THEN f.device_models_with_us END) / SUM(CASE WHEN f.quarter = l.q THEN f.device_models END) AS share_now,\n  SUM(CASE WHEN f.quarter = add_months(l.q, -12) THEN f.device_models_with_us END) / SUM(CASE WHEN f.quarter = add_months(l.q, -12) THEN f.device_models END) AS share_year_ago\nFROM ${catalog}.${schema}.v_device_footprint f\nCROSS JOIN latest l\nJOIN ${catalog}.${schema}.v_customers c USING (customer_id)\nWHERE c.tier = 'Top 10'\nGROUP BY c.customer_name\nORDER BY share_now - share_year_ago"
+    },
+    {
+      "question": "Which top-10 contracts end in the next 180 days?",
+      "sql": "SELECT c.customer_name, k.contract_type, k.end_date, k.annual_value_usd, k.status\nFROM ${catalog}.${schema}.v_contracts k\nJOIN ${catalog}.${schema}.v_customers c USING (customer_id)\nWHERE c.tier = 'Top 10'\n  AND k.end_date >= current_date()\n  AND k.end_date < date_add(current_date(), 180)\nORDER BY k.end_date"
+    },
+    {
+      "question": "What is lead-to-win conversion for the top 10 over the last 12 complete months, by account?",
+      "sql": "SELECT c.customer_name,\n  COUNT_IF(p.stage = 'Closed Won') / NULLIF(COUNT_IF(p.stage IN ('Closed Won', 'Closed Lost', 'Disqualified')), 0) AS conversion\nFROM ${catalog}.${schema}.v_pipeline p\nJOIN ${catalog}.${schema}.v_customers c USING (customer_id)\nWHERE c.tier = 'Top 10'\n  AND p.close_date >= add_months(trunc(current_date(), 'MM'), -12)\n  AND p.close_date < trunc(current_date(), 'MM')\nGROUP BY c.customer_name\nORDER BY conversion"
+    }
+  ],
+  "sample_questions": [
+    "What are our top 10 customers focused on?",
+    "Which accounts explain next quarter's gap to plan?",
+    "Which top-10 contracts renew in the next six months?",
+    "Where is our share of new devices falling?"
+  ]
+}

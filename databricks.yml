@@ -1,0 +1,186 @@
+# Databricks Asset Bundle for the Executive Intelligence client app.
+#
+# This bundle deploys ONLY the client (./executive-intelligence-app). The agent
+# (./executive-intelligence-agent) is deployed by the Agent Bricks CLI, which
+# provisions its memory, session, and runtime stores and its tracing; the bundle
+# has no resource type for those. `./deploy.sh` deploys both and wires them
+# together, and is the normal way to deploy:
+#
+#   ./deploy.sh -p <profile> --var data_catalog=<catalog>
+#
+# To deploy the client by hand (after the agent exists):
+#   (cd executive-intelligence-app && npm run build)
+#   databricks bundle deploy -t dev --var agent_app_url=<agent app url> --var data_catalog=<catalog>
+#   databricks bundle run app -t dev --var agent_app_url=<agent app url> --var data_catalog=<catalog>
+#
+# Moving to another workspace changes variables, not code: see "Moving to
+# another workspace" in README.md.
+
+bundle:
+  name: executive-intelligence
+  # `user_api_scopes` needs a recent CLI. Pinning a floor here turns a
+  # confusing schema error into a clear "upgrade your CLI" message.
+  databricks_cli_version: ">=0.283.0"
+
+# Upload only the client. Without `paths`, the bundle root is synced, which
+# would ship the agent project (and its .venv) into the client app's source.
+sync:
+  paths:
+    - ./executive-intelligence-app
+  exclude:
+    - executive-intelligence-app/node_modules
+    - executive-intelligence-app/server/venv
+    - executive-intelligence-app/tests
+    - executive-intelligence-app/**/__pycache__
+    - executive-intelligence-app/.env*
+  # FastAPI serves the built frontend from dist/, which .gitignore excludes.
+  # branding/ is gitignored too; ship it so a rebuild in the app keeps the theme.
+  include:
+    - executive-intelligence-app/dist/**
+    - executive-intelligence-app/branding/**
+
+variables:
+  app_name:
+    description: "Name of the deployed client app. Must be unique in the workspace."
+    default: "exec-intel-app"
+  environment:
+    description: "Which deployment this is: local | dev | prod. Surfaced by /api/health."
+    default: "dev"
+  agent_app_url:
+    description: >-
+      URL of the agent app (agent-bricks-<deployment_name> from
+      executive-intelligence-agent/agent.toml). deploy.sh looks it up.
+  warehouse_id:
+    description: >-
+      SQL warehouse the dashboards query. Defaults to the workspace's
+      "Serverless Starter Warehouse"; pass --var warehouse_id=<id> where that
+      does not exist.
+    lookup:
+      warehouse: "Serverless Starter Warehouse"
+  data_catalog:
+    description: >-
+      Catalog holding the dashboard contract views (data/contract.md). No
+      default: it differs in every workspace.
+  data_schema:
+    description: "Schema holding the dashboard contract views."
+    default: "exec_intel"
+  synthetic_data:
+    description: >-
+      "true" while the contract views sit over synthetic data, which badges
+      every page "Synthetic data". Set "false" only once the views read a
+      workspace's real tables (data/contract.md).
+    default: "true"
+
+resources:
+  apps:
+    app:
+      name: ${var.app_name}
+      description: "Executive Intelligence: client app with the agent tray"
+      source_code_path: ./executive-intelligence-app
+
+      # The dashboards' warehouse. Attaching it grants the app's service
+      # principal CAN_USE and injects its id as SQL_WAREHOUSE_ID below. Queries
+      # run as the signed-in user, who needs CAN_USE on it as well.
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: CAN_USE
+
+      # LAKEBASE, THIRD-PARTY SECRETS
+      # -----------------------------
+      # See ../app-template/databricks.yml for the commented `database_instances`,
+      # `postgres`, and `secret` resource blocks. The backend code for Lakebase
+      # (server/database.py) is present and stays dormant until PGHOST is set.
+
+      config:
+        command:
+          - uvicorn
+          - server.main:app
+          - --host
+          - "0.0.0.0"
+          # Databricks Apps routes traffic to port 8000. Don't change this.
+          - --port
+          - "8000"
+          # The app runs behind the Apps reverse proxy. Without these, the
+          # X-Forwarded-* headers that carry user identity are ignored.
+          - --proxy-headers
+          - --forwarded-allow-ips
+          - "*"
+
+        env:
+          # Uvicorn is started from the app's source root, but the backend's
+          # imports are flat (`from routes import health`). This makes both resolve.
+          - name: PYTHONPATH
+            value: ".:server"
+          - name: APP_ENVIRONMENT
+            value: ${var.environment}
+          - name: AGENT_APP_URL
+            value: ${var.agent_app_url}
+          - name: SQL_WAREHOUSE_ID
+            value_from: sql-warehouse
+          - name: DATA_CATALOG
+            value: ${var.data_catalog}
+          - name: DATA_SCHEMA
+            value: ${var.data_schema}
+          - name: SYNTHETIC_DATA
+            value: ${var.synthetic_data}
+
+      # ON-BEHALF-OF USER AUTHORIZATION
+      # -------------------------------
+      # Dashboard queries run as the signed-in user (server/services/dashboards.py),
+      # so Unity Catalog applies each user's own grants. These scopes let the
+      # forwarded user token run SQL on a warehouse, and nothing else. A
+      # workspace admin must enable user authorization for apps before they
+      # take effect; `scripts/preflight.sh` checks that they did.
+      #
+      # The agent tray does not use them: it calls the agent with this app's
+      # service principal (app-to-app auth), passing the user's email from the
+      # proxy headers as the memory actor.
+      user_api_scopes:
+        - sql
+        - sql.statement-execution
+        - sql.warehouses
+
+      permissions:
+        # Whoever deploys keeps the ability to manage it.
+        - level: CAN_MANAGE
+          user_name: ${workspace.current_user.userName}
+
+targets:
+  # Personal development deployment. `mode: development` does not prefix app
+  # names, so two people deploying to one workspace share `exec-intel-app`;
+  # pass `--var app_name=<unique>` to keep them apart.
+  dev:
+    mode: development
+    default: true
+    workspace:
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      environment: dev
+    resources:
+      apps:
+        app:
+          # Dev convenience: let anyone in the workspace open it. Production
+          # below deliberately grants nothing beyond the deployer — add the
+          # specific groups that should have access.
+          permissions:
+            - level: CAN_USE
+              group_name: users
+
+  prod:
+    mode: production
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      app_name: exec-intel-app-prod
+      environment: prod
+    resources:
+      apps:
+        app:
+          permissions:
+            - level: CAN_MANAGE
+              user_name: ${workspace.current_user.userName}
+            # Replace with the group that should actually use this in production.
+            # - level: CAN_USE
+            #   group_name: executive-intelligence-users

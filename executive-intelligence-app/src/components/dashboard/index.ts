@@ -1,0 +1,12 @@
+/** The dashboard toolkit. Pages import from here. */
+export { default as DashboardPage } from './DashboardPage'
+export { default as KpiCard } from './KpiCard'
+export { default as ChartCard } from './ChartCard'
+export { default as DataTable, type Column } from './DataTable'
+export { default as FilterBar } from './FilterBar'
+export { default as WidgetCard, type WidgetSpan } from './WidgetCard'
+export { default as WidgetState } from './WidgetState'
+export { default as AskAboutButton } from './AskAboutButton'
+export { pivotRows, type Series } from './chartData'
+export { describeFilters, monthsAgo, splitList, type FilterDef, type FilterOption } from './filters'
+export { formatValue, toNumber, type ValueFormat } from './format'

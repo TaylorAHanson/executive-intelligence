@@ -1,0 +1,47 @@
+# Agent Development Guide
+
+This project is the Executive Intelligence agent: one LangGraph workload hosted by
+`databricks_agentkit.DurableAgentServer` that serves every section of the client app in
+`../executive-intelligence-app`. Each request's `input.context` selects a prompt section and the
+tools offered for that turn (`agent/contexts.py`). See `../architecture.md` for the whole system.
+
+For CLI workflows, read [.agents/skills/agent-bricks-workflow/SKILL.md](.agents/skills/agent-bricks-workflow/SKILL.md).
+If it is absent, read the bundled skill at the path printed by the CLI's coding-agent hint.
+
+Read [AGENTKIT_CONTRACT.md](AGENTKIT_CONTRACT.md) before changing integration points. It owns command
+requirements, tool/state/tracing wiring, and recovery. [README.md](README.md) owns setup and client
+examples. Keep this file as a development map rather than repeating those rules.
+
+## Commands
+
+```bash
+agentbricks dev
+uv run pytest
+agentbricks --profile <profile> deploy   # uses deployment_name from agent.toml
+../deploy.sh -p <profile>                # agent + client app together
+```
+
+### Deploying from a coding agent
+
+A first deploy takes ~3 min (mostly starting app compute); redeploys are faster. Either run
+`agentbricks deploy` in the foreground with a long command timeout (for example, Claude Code's Bash
+`timeout: 600000`), or run `agentbricks deploy <name> --no-wait` and then
+`agentbricks deployments wait agent-bricks-<name>` until it exits 0; the agent then answers
+requests. Exit 75 means it is still deploying; run the same command again. Don't poll with `sleep`.
+
+## Code map
+
+| Change | File |
+| --- | --- |
+| App contexts: base prompt, per-section prompt and tool patterns | `agent/contexts.py` |
+| Framework-native agent and `run_agent` | `agent/agent.py` |
+| Local tools | `agent/tools/` |
+| MCP servers | `agent/mcps.py` |
+| Managed runtime `invoke`/`recover` hooks and input/output translation | `runtime/adapter.py` |
+| `DurableAgentServer` construction and hook registration | `runtime/main.py` |
+| Browser and managed-state routes | `runtime/ui.py` |
+| Browser behavior | `ui/app.js` |
+
+Shared adapters come from `databricks_agentkit.langgraph` and `databricks_agentkit.runtime`. Consult
+their docstrings for API details. Update the shared contract and relevant tests when integration
+requirements change.

@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+server/venv/
+venv/
+.pytest_cache/
+
+# Secrets — never commit. Copy .env.example to .env instead.
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+npm-debug.log
+
+# package-lock.json is deliberately NOT committed, which is the opposite of the
+# usual advice — so please don't "fix" it by adding it back.
+#
+# Every `resolved` URL in a lockfile records the registry it was generated
+# against. Generated behind a private mirror, all several hundred of them point
+# at a host nobody outside that network can reach, and `npm install` fails for
+# every person who clones the template. A stale lockfile in a template is a
+# minor cost; one that can't resolve is a broken repo.
+#
+# In an application repo, commit the lockfile — reproducible installs are worth
+# more there. Just generate it against the public registry:
+#     npm install --registry https://registry.npmjs.org
+# and check that `grep -c registry.npmjs.org package-lock.json` accounts for
+# every `resolved` line before committing.
+package-lock.json
+
+# A repo-level .npmrc is how a private registry gets baked in unnoticed, and it
+# is a common place for an auth token to end up.
+.npmrc
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Local dev logs (dev.sh writes these)
+*.log
+
+# Databricks
+.databricks/
+.bundle/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
