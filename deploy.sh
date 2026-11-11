@@ -19,8 +19,9 @@
 #   client  executive-intelligence-app/    `databricks bundle deploy`, from the
 #           bundle in ./databricks.yml.
 #
-# Then the client's service principal is granted CAN_USE on the agent app, which
-# Databricks Apps requires for one app to call another.
+# Then everyone with CAN_USE on the client is granted CAN_USE on the agent app.
+# The tray calls the agent with the signed-in user's own token, so the agent's
+# data tools run as that user, and each user needs access to both apps.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -99,7 +100,10 @@ if $DEPLOY_AGENT; then
     step "Deploying agent $AGENT_APP (Agent Bricks CLI)"
     # --no-wait plus `deployments wait` instead of a foreground deploy, so the
     # frontend can build while the agent's compute starts.
-    (cd "$AGENT_DIR" && agentbricks -p "$PROFILE" deploy --no-wait)
+    # --allow-user-scope-update: tools bound with auth = "user" need scopes
+    # (genie, ...) that an app created earlier may lack; without the flag the
+    # deploy stops rather than widen what the app may do as its users.
+    (cd "$AGENT_DIR" && agentbricks -p "$PROFILE" deploy --no-wait --allow-user-scope-update)
 fi
 
 if $DEPLOY_APP; then
@@ -147,15 +151,36 @@ step "Deploying the client app (Databricks Asset Bundle, target $TARGET)"
 
 CLIENT_APP="$(cd "$ROOT" && databricks bundle summary "${BUNDLE_ARGS[@]}" -o json \
     | python3 -c 'import json, sys; print(json.load(sys.stdin)["resources"]["apps"]["app"]["name"])')"
-CLIENT_SP="$(databricks apps get "$CLIENT_APP" -p "$PROFILE" -o json | json_field service_principal_client_id)"
 
-step "Granting $CLIENT_APP's service principal CAN_USE on $AGENT_APP"
+step "Granting $CLIENT_APP's users CAN_USE on $AGENT_APP"
+# The client's direct CAN_USE grants (databricks.yml `permissions`) are the
+# audience; copy them so there is one place to say who may use the app.
 # update-permissions adds to the agent app's ACL; it does not replace it.
-databricks apps update-permissions "$AGENT_APP" -p "$PROFILE" --json "{
-  \"access_control_list\": [
-    {\"service_principal_name\": \"$CLIENT_SP\", \"permission_level\": \"CAN_USE\"}
-  ]
-}" >/dev/null
+# Skips principals that already manage the agent app, so the patch cannot
+# downgrade them.
+CLIENT_ACL_JSON="$(databricks apps get-permissions "$CLIENT_APP" -p "$PROFILE" -o json)"
+AGENT_ACL_JSON="$(databricks apps get-permissions "$AGENT_APP" -p "$PROFILE" -o json)"
+AGENT_ACL="$(python3 -c '
+import json, sys
+client, agent = json.loads(sys.argv[1]), json.loads(sys.argv[2])
+KEYS = ("user_name", "group_name", "service_principal_name")
+
+def principal(entry):
+    return {k: entry[k] for k in KEYS if entry.get(k)}
+
+def direct(entry):
+    return {p.get("permission_level") for p in entry.get("all_permissions", []) if not p.get("inherited")}
+
+managers = [principal(e) for e in agent.get("access_control_list", []) if "CAN_MANAGE" in direct(e)]
+grants = [
+    {**principal(e), "permission_level": "CAN_USE"}
+    for e in client.get("access_control_list", [])
+    if "CAN_USE" in direct(e) and principal(e) and principal(e) not in managers
+]
+print(json.dumps({"access_control_list": grants}))
+' "$CLIENT_ACL_JSON" "$AGENT_ACL_JSON")"
+databricks apps update-permissions "$AGENT_APP" -p "$PROFILE" --json "$AGENT_ACL" >/dev/null
+echo "$AGENT_ACL" | python3 -c 'import json, sys; print("  CAN_USE: " + (", ".join(next(v for k, v in g.items() if k != "permission_level") for g in json.load(sys.stdin)["access_control_list"]) or "nobody new"))'
 
 step "Starting the client app"
 (cd "$ROOT" && databricks bundle run app "${BUNDLE_ARGS[@]}")

@@ -15,9 +15,9 @@ name = "exec-intel-agent-sessions"
 experiment_name = "/Shared/agentbricks_traces/executive-intelligence-agent-uc"
 [[tools]]
 id = "exec_data"
-auth = "app"
+auth = "user"
 source = {kind = "genie_agent", space_id = "01f1de078f2016edb763e4eaeb6a3acc"}
 [[tools]]
 id = "ci_data"
-auth = "app"
+auth = "user"
 source = {kind = "genie_agent", space_id = "01f1de12ab881e8c979ea033bd36c8ca"}

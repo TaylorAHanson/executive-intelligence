@@ -23,7 +23,7 @@ See `../architecture.md`.
 │    /api/*        other JSON endpoints       │
 │    /*            serves the built React app │
 └────────┬─────────────────────────┬──────────┘
-         │ user token (OBO)        │ this app's service principal (CAN_USE)
+         │ user token (OBO)        │ user token (OBO; user needs CAN_USE)
 ┌────────▼─────────────┐  ┌────────▼──────────────────────────┐
 │  SQL warehouse       │  │  Agent app                        │
 │  contract views (UC) │  │  agent-bricks-exec-intel-agent    │
@@ -80,8 +80,8 @@ tail -f backend.log frontend.log
 | `AGENTS.md` | **The ground rules.** Read this before writing code. |
 | `dev.sh` | One command to run everything locally. Self-repairing. |
 | `../databricks.yml` | Bundle definition (repo root): the app, dev and prod targets. |
-| `../deploy.sh` | Deploys the agent and this app and grants this app access to the agent. |
-| `server/middleware/auth.py` | On-behalf-of auth, with the service principal as a deliberate exception. |
+| `../deploy.sh` | Deploys the agent and this app and grants this app's users access to the agent. |
+| `server/middleware/auth.py` | On-behalf-of auth for data and for agent calls, with the service principal as a deliberate exception. |
 | `server/routes/agent.py`, `server/services/agent.py` | The tray's backend: chat, approval resume, calls to the agent app. |
 | `src/components/AgentTray.tsx` | The tray: one conversation per context, approval cards. |
 | `src/sections.ts` | The dashboard registry: routes, nav, landing tiles, and each dashboard's agent context. |
@@ -223,13 +223,16 @@ real data, is "What is not real" in `../data/contract.md`.
 The script builds `dist/` (FastAPI serves it, and `bundle deploy` doesn't build
 it — skip it and the app returns a 503 saying so), deploys the agent with the
 Agent Bricks CLI, deploys this app from the root bundle with the agent's URL,
-grants this app's service principal CAN_USE on the agent app, and starts this
+gives everyone with CAN_USE on this app CAN_USE on the agent app, and starts this
 app. The agent can't be deployed from the bundle: Agent Bricks provisions its
 memory, session and runtime stores, which have no bundle resource type.
 
-The app requests the `sql` user scopes, so **a workspace admin must enable user
-authorization for apps** before on-behalf-of works; until then the token header
-never arrives and dashboard endpoints return 401. For a new workspace, follow
+The app requests the `sql`, `apps` and `genie` user scopes, so **a workspace
+admin must enable user authorization for apps** before on-behalf-of works; until
+then the token header never arrives and dashboard endpoints return 401. The tray
+calls the agent with the same user token, and the agent's Genie tools run as
+that user. The agent app passes a caller's token on only if it already carries
+the scopes the agent's tools need, which is why this app asks for `genie`. For a new workspace, follow
 "Moving to another workspace" in `../README.md`.
 
 The `dev` target lets everyone in the workspace open the app. Its name is
@@ -253,7 +256,7 @@ npm run build                                                    # type-check
 | --- | --- |
 | Backend won't start | Read `backend.log`. Usually a missing import or a syntax error. |
 | Tray says the agent isn't configured (503) | `AGENT_APP_URL` is unset. Set it in `.env`, or deploy with `../deploy.sh`. |
-| Tray says the agent rejected this app (502, CAN_USE) | This app's service principal lacks CAN_USE on the agent app. Rerun `../deploy.sh`, which grants it. |
+| Tray says the agent rejected your credentials (502) | `backend.log` (or `databricks apps logs`) prints the token's scopes. Without `apps` or `genie`, the browser's consent predates a scope change: delete the app's site cookie and reload to consent again. With both, the user lacks CAN_USE on the agent app; rerun `../deploy.sh`, which copies this app's users to it. |
 | Tray can't reach the agent locally (502) | The agent isn't running. Start both with `../dev.sh`; if the agent won't start, read `../executive-intelligence-agent/agent.log`. |
 | 401 from every data endpoint when deployed | User authorization isn't enabled on the app, or the scope is missing from `user_api_scopes`. |
 | `ModuleNotFoundError: No module named 'server'` | Backend imports are flat — `from routes import x`, not `from server.routes import x`. |

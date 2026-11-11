@@ -164,8 +164,9 @@ Use `agentbricks init --framework langgraph --disable-chat-app` for API-only out
 - Each dashboard context's data tools are a Genie space bound in `agent.toml`: `exec_data` for
   `executive` and `ci_data` for `customer-intelligence` (tools `<name>_ask`, `<name>_poll`,
   `<name>_query_result`). Space ids are per workspace: `../data/genie.py --space <executive|customer>`
-  creates a space, then `agentbricks tools add genie-agent <space_id> --name <name> --auth app`
-  binds it.
+  creates a space, then `agentbricks tools add genie-agent <space_id> --name <name> --auth user`
+  binds it. Genie runs as the signed-in user, whose token the client app forwards; that token must
+  carry the `genie` scope (the client's `user_api_scopes`) or the request arrives with no user.
 - Traces go to Unity Catalog tables rather than the experiment's artifact store, because Databricks
   Apps in some workspaces cannot reach the artifact store's regional storage proxy.
   `scripts/trace_storage.py` links the experiment in `agent.toml` `[tracing]`; MLflow links only an

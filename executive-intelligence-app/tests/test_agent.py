@@ -114,5 +114,30 @@ check(
 check("an empty response normalizes without failing", normalize_output({})["messages"] == [])
 
 
+# The agent runs its data tools as whoever calls it, so the call must carry the
+# user's token, and a deployment must refuse rather than fall back to the app.
+import os  # noqa: E402
+
+from fastapi import HTTPException  # noqa: E402
+
+from middleware.auth import agent_auth_headers  # noqa: E402
+
+os.environ["DATABRICKS_APP_NAME"] = "exec-intel-app"
+os.environ["DATABRICKS_CLIENT_ID"] = "app-sp"
+os.environ["DATABRICKS_CLIENT_SECRET"] = "app-secret"
+check(
+    "a deployed call to the agent carries the signed-in user's token",
+    agent_auth_headers("user-token") == {"Authorization": "Bearer user-token"},
+)
+try:
+    agent_auth_headers(None)
+    refused = False
+except HTTPException as e:
+    refused = e.status_code == 401
+check("a deployed call with no user token is refused, never sent as the app", refused)
+for name in ("DATABRICKS_APP_NAME", "DATABRICKS_CLIENT_ID", "DATABRICKS_CLIENT_SECRET"):
+    del os.environ[name]
+
+
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

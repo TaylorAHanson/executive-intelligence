@@ -185,24 +185,24 @@ def get_service_principal_client() -> WorkspaceClient:
     )
 
 
-def get_agent_app_client() -> WorkspaceClient:
-    """A client whose token authenticates THIS APP to the agent app.
+def agent_auth_headers(user_token: Optional[str]) -> dict[str, str]:
+    """Headers that authenticate THE SIGNED-IN USER to the deployed agent app.
 
-    Databricks Apps authenticates an app-to-app call with the calling app's
-    service principal; that is the documented path, and the forwarded user
-    token is scoped to this app's own `user_api_scopes`, not to the agent app.
-    So this is service principal auth, used only as transport: the signed-in
-    user is identified to the agent as the memory actor, taken from the proxy
-    headers by `get_caller`. Grant this app's service principal CAN_USE on the
-    agent app (`deploy.sh` does). The agent's tools run as the agent's own
-    identity, so its Unity Catalog grants bound what any user can reach.
+    The agent's data tools run on behalf of whoever calls it, so the call must
+    carry the user's token, not this app's: the `apps` scope in databricks.yml
+    lets the forwarded token call another app, and the agent app's proxy then
+    forwards the user to the agent. The user needs CAN_USE on the agent app
+    (`deploy.sh` copies this app's CAN_USE grants to it).
+
+    Never the service principal: an agent called as the app would query every
+    user's data as the agent, which is the bypass rule 2 above forbids.
     """
-    if settings.is_running_in_databricks_apps():
-        return get_service_principal_client()
+    if user_token:
+        return {"Authorization": f"Bearer {user_token}"}
 
     if settings.local_dev_auth_enabled():
         _ensure_home()
-        return _cached_client(
+        client = _cached_client(
             "local-dev",
             WorkspaceClient,
             failure_detail=(
@@ -211,10 +211,15 @@ def get_agent_app_client() -> WorkspaceClient:
                 "`agentbricks dev` server."
             ),
         )
+        return client.config.authenticate()
 
+    logger.error("Agent call requires a user token but none was forwarded.")
     raise HTTPException(
         status_code=401,
-        detail="No credentials to call the agent app. Set LOCAL_DEV_AUTH=true for local development.",
+        detail=(
+            "The agent runs as the signed-in user, but no user token was forwarded. Check "
+            "that user authorization is enabled and the `apps` scope is in databricks.yml."
+        ),
     )
 
 

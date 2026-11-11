@@ -129,18 +129,22 @@ resources:
       # ON-BEHALF-OF USER AUTHORIZATION
       # -------------------------------
       # Dashboard queries run as the signed-in user (server/services/dashboards.py),
-      # so Unity Catalog applies each user's own grants. These scopes let the
-      # forwarded user token run SQL on a warehouse, and nothing else. A
-      # workspace admin must enable user authorization for apps before they
-      # take effect; `scripts/preflight.sh` checks that they did.
-      #
-      # The agent tray does not use them: it calls the agent with this app's
-      # service principal (app-to-app auth), passing the user's email from the
-      # proxy headers as the memory actor.
+      # so Unity Catalog applies each user's own grants. The sql scopes let the
+      # forwarded user token run SQL on a warehouse. `apps` lets it call the
+      # agent app, so the agent runs its data tools as that user too
+      # (server/middleware/auth.py, agent_auth_headers). The agent app's proxy
+      # forwards the token to the agent only if it already carries every scope
+      # the agent's `auth = "user"` tools need, so list those here as well
+      # (`genie` for the Genie tools). Without them the agent sees no user and
+      # answers 401 MCP_USER_AUTH_REQUIRED. A workspace admin must
+      # enable user authorization for apps before these take effect;
+      # `scripts/preflight.sh` checks that they did.
       user_api_scopes:
         - sql
         - sql.statement-execution
         - sql.warehouses
+        - apps
+        - genie
 
       permissions:
         # Whoever deploys keeps the ability to manage it.

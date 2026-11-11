@@ -136,17 +136,24 @@ The dashboards follow the rule: every `/api/dashboards/...` handler takes
 the contract views. That needs the `sql` scopes in `../databricks.yml` and user
 authorization enabled in the workspace.
 
-There are two exceptions here. The first is `database.py` minting Lakebase
-credentials: the app is authenticating *itself* to its own database, not reading
-a user's data. Unity Catalog access still runs under the user's token. That
-exception has a consequence of its own, which is the next rule.
+The one exception here is `database.py` minting Lakebase credentials: the app is
+authenticating *itself* to its own database, not reading a user's data. Unity
+Catalog access still runs under the user's token. That exception has a
+consequence of its own, which is the next rule.
 
-The second is `get_agent_app_client`, which authenticates this app to the agent
-app. Databricks Apps authenticates an app-to-app call with the calling app's
-service principal, so this is transport, not data access: the user is identified
-to the agent as its memory actor, from `get_caller`, never from the request body.
-The agent's tools run as the agent's own identity, so its grants bound what any
-user of this app can reach through the tray. See `../architecture.md`, section 5.
+The agent follows the rule too. `agent_auth_headers` sends the signed-in user's
+token to the agent app, and the agent's Genie tools (`auth = "user"` in
+`agent.toml`) run with it, so the tray can reach only what the user could query
+directly. Two things make that work, and both are easy to undo by accident:
+
+- The token reaches the agent only if it carries the `apps` scope *and* every
+  scope the agent's user-auth tools need (`genie` today). Adding a tool with a
+  new scope means adding that scope to `user_api_scopes` here.
+- Each user needs CAN_USE on the agent app; `../deploy.sh` copies this app's
+  CAN_USE grants to it.
+
+The actor and session the agent sees still come from `get_caller`, never from
+the request body. See `../architecture.md`, section 6.
 
 The reason this needs stating: SP auth is *easier*. It works locally without
 setup, and it never 401s. Reaching for it is the path of least resistance and
@@ -284,10 +291,10 @@ Run `../deploy.sh -p <profile> --var data_catalog=<catalog>` from anywhere. It
 runs `../scripts/preflight.sh`, builds `dist/` (FastAPI serves it, and `bundle
 deploy` does not build it), deploys the agent with the Agent Bricks CLI, deploys
 this app from the root bundle with the agent's URL as `agent_app_url` plus any
-`--var`, grants this app's service principal CAN_USE on the agent app, and
-starts this app. `--app-only` skips the agent.
+`--var`, gives this app's users CAN_USE on the agent app, and starts this app.
+`--app-only` skips the agent.
 
-The app requests the `sql` scopes, so a workspace admin must enable user
+The app requests the `sql`, `apps` and `genie` scopes, so a workspace admin must enable user
 authorization for apps before OBO works. Without it the token header never
 arrives and every dashboard endpoint returns 401 — the single most common reason
 an app that worked locally fails once deployed. Preflight checks the deployed

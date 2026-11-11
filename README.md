@@ -45,9 +45,10 @@ workspace setup, in this order:
 
 1. **Previews.** An admin enables **Agent Memory Sessions** (profile menu > Previews). The agent
    answers every request with `FEATURE_DISABLED` without it.
-2. **User authorization for apps.** An admin enables it, so the client's `user_api_scopes`
-   (`sql`, `sql.statement-execution`, `sql.warehouses`) take effect and dashboards query as the
-   signed-in user.
+2. **User authorization for apps.** An admin enables it, so the client's `user_api_scopes` take
+   effect. Everything that reads data runs as the signed-in user: dashboards with the `sql`
+   scopes, and the agent's Genie tools with the user's token, which the client forwards with the
+   `apps` and `genie` scopes.
 3. **Model.** The agent's default model is `system.ai.claude-sonnet-5-5`
    (`databricks-claude-sonnet-5-5`). If the workspace lacks it, change `MODEL` in
    `executive-intelligence-agent/agent/agent.py`.
@@ -66,27 +67,29 @@ workspace setup, in this order:
    creates a space the agent queries, from `data/genie/<space>.json`. Create both: `executive`
    (bound as `exec_data`) and `customer` (bound as `ci_data`). Bind each id in place of the one in
    `agent.toml`: from `executive-intelligence-agent/`, run `agentbricks tools remove <name>` if the
-   binding exists, then `agentbricks tools add genie-agent <space_id> --name <name> --auth app`.
+   binding exists, then `agentbricks tools add genie-agent <space_id> --name <name> --auth user`.
+   Add `--grant-to <group>` to give the users' group CAN_RUN on the space; Genie answers as each
+   user.
 8. **Trace storage.** From `executive-intelligence-agent/`, run
    `uv run python scripts/trace_storage.py -p <profile> --catalog <catalog> --warehouse <id>`
    before the first deploy, so traces go to Unity Catalog tables. MLflow links only an experiment
    with no traces; if the one named in `agent.toml` has some, choose a new name.
 9. **Preflight.** `scripts/preflight.sh -p <profile> --catalog <catalog> [--warehouse <id>]` and
    fix every FAIL.
-10. **Deploy.** `./deploy.sh -p <profile> -t <target> --var data_catalog=<catalog> [--var ...]`. It
-    grants the client's service principal CAN_USE on the agent app.
-11. **Agent grants.** The agent's service principal exists only after its first deploy. The deploy
-    grants it CAN_RUN on the Genie spaces and MODIFY on the trace tables; rerun
-    `data/genie.py ... --space <space> --grant-app agent-bricks-exec-intel-agent` for each space
-    to give it CAN_USE on the warehouse and SELECT on the views, which Genie queries as it.
-12. **Access.** For `prod`, replace the commented `CAN_USE` group in `databricks.yml` with the
+10. **Access.** For `prod`, replace the commented `CAN_USE` group in `databricks.yml` with the
     group that should open the app.
-13. **Verify.** Rerun preflight without `--before-deploy`. It should now pass the user
-    authorization and agent-grant checks too. Open a dashboard and confirm the queries appear
-    under your own name in the warehouse's query history. Ask the tray about a dashboard figure
-    and confirm the trace in the agent's experiment has its spans. Read the Customer Intelligence
-    briefing end to end with someone from sales or finance before anyone else sees it.
-14. **Synthetic badge.** Once every view reads real tables, redeploy with
+11. **Deploy.** `./deploy.sh -p <profile> -t <target> --var data_catalog=<catalog> [--var ...]`. It
+    gives everyone with CAN_USE on the client CAN_USE on the agent app too, since the tray calls
+    the agent as the user.
+12. **Verify.** Rerun preflight without `--before-deploy`. It should now pass the user
+    authorization and agent-access checks too. Open a dashboard and ask the tray about a
+    dashboard figure, then confirm both sets of queries appear under your own name in the
+    warehouse's query history. If the tray says the agent rejected your credentials right after
+    a scope change, delete the app's site cookie in the browser so the next visit asks for consent
+    to the new scopes. Confirm the trace in the agent's experiment has its spans. Read the
+    Customer Intelligence briefing end to end with someone from sales or finance before anyone
+    else sees it.
+13. **Synthetic badge.** Once every view reads real tables, redeploy with
     `--var synthetic_data=false` to remove the header's "Synthetic data" badge.
 
 | Variable | Default | Set it to |

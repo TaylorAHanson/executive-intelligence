@@ -2,8 +2,9 @@
 
 The caller's identity comes from `get_caller` (the Apps proxy headers), never
 from the request body, so a browser cannot ask the agent to recall another
-user's memory or continue another user's conversation. See `services/agent.py`
-for how that identity reaches the agent.
+user's memory or continue another user's conversation. The call to the agent
+carries the user's own token, so the agent's data tools run as that user. See
+`services/agent.py`.
 
 `context` is the section of the app the user is in. The agent picks its prompt
 and tools from it (`executive-intelligence-agent/agent/contexts.py`), and falls
@@ -15,7 +16,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from middleware.auth import CallerIdentity, get_caller
+from middleware.auth import CallerIdentity, get_caller, get_user_token
 from services import agent
 
 router = APIRouter()
@@ -46,24 +47,34 @@ class ResumeRequest(BaseModel):
 # `def`, not `async def`: the agent call blocks for up to AGENT_TIMEOUT_SECONDS,
 # and FastAPI runs sync handlers in a thread pool so it delays only this request.
 @router.post("/chat", summary="Send one turn to the agent as the signed-in user")
-def chat(request: ChatRequest, caller: CallerIdentity = Depends(get_caller)) -> dict:
+def chat(
+    request: ChatRequest,
+    caller: CallerIdentity = Depends(get_caller),
+    user_token: Optional[str] = Depends(get_user_token),
+) -> dict:
     return agent.invoke(
         agent.invocation_body(
             session=agent.session_key(caller.email, str(request.session_id)),
             actor=caller.email,
             context=request.context,
             message=request.message,
-        )
+        ),
+        user_token,
     )
 
 
 @router.post("/resume", summary="Approve or reject the agent's paused tool calls")
-def resume(request: ResumeRequest, caller: CallerIdentity = Depends(get_caller)) -> dict:
+def resume(
+    request: ResumeRequest,
+    caller: CallerIdentity = Depends(get_caller),
+    user_token: Optional[str] = Depends(get_user_token),
+) -> dict:
     return agent.invoke(
         agent.resume_body(
             session=agent.session_key(caller.email, str(request.session_id)),
             actor=caller.email,
             context=request.context,
             decisions=[d.model_dump(exclude_none=True) for d in request.decisions],
-        )
+        ),
+        user_token,
     )

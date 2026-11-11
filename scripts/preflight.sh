@@ -6,10 +6,11 @@
 #
 # Prints one line per check and exits 1 if any check FAILs. `deploy.sh` runs it
 # with --before-deploy, which reports checks that only a deploy can satisfy
-# (the app's user scopes, the agent grant) as WARN rather than FAIL.
+# (the app's user scopes, the users' grant on the agent) as WARN rather than FAIL.
 #
-# What it cannot check: whether each USER has SELECT on the views and CAN_USE
-# on the warehouse. Those are per-user; see data/grants.sql.
+# What it cannot check: whether each USER has SELECT on the views, CAN_USE on
+# the warehouse, and CAN_RUN on the Genie spaces. Those are per-user; see
+# data/grants.sql and data/genie.py --grant-to.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -158,34 +159,42 @@ else
 fi
 
 # --- Apps --------------------------------------------------------------------------
+# The tray forwards the user's token to the agent, and the agent's proxy passes
+# it on only if it already carries the scopes the agent's user-auth tools need.
+REQUIRED_SCOPES="sql apps genie"
 APP_JSON="$(dbx apps get "$CLIENT_APP")" || APP_JSON=""
-CLIENT_SP=""
 if [ -n "$APP_JSON" ]; then
-    CLIENT_SP="$(echo "$APP_JSON" | field service_principal_client_id)"
     SCOPES="$(echo "$APP_JSON" | field effective_user_api_scopes)"
-    case " $SCOPES " in
-        *" sql "*) report PASS "User authorization (OBO)" "$CLIENT_APP has the sql scope" ;;
-        *) report_deployable "User authorization (OBO)" "$CLIENT_APP lacks the sql scope: deploy, and ask an admin to enable user authorization for apps" ;;
-    esac
+    MISSING=""
+    for scope in $REQUIRED_SCOPES; do
+        case " $SCOPES " in *" $scope "*) ;; *) MISSING="$MISSING $scope" ;; esac
+    done
+    if [ -z "$MISSING" ]; then
+        report PASS "User authorization (OBO)" "$CLIENT_APP has scopes: $REQUIRED_SCOPES"
+    else
+        report_deployable "User authorization (OBO)" "$CLIENT_APP lacks:$MISSING; deploy, and ask an admin to enable user authorization for apps"
+    fi
 else
     report WARN "User authorization (OBO)" "$CLIENT_APP not deployed yet; rerun after deploying"
 fi
 
 if dbx apps get "$AGENT_APP" >/dev/null; then
-    if [ -n "$CLIENT_SP" ] && dbx apps get-permissions "$AGENT_APP" | grep -q "$CLIENT_SP"; then
-        report PASS "Client may call agent" "$CLIENT_APP's service principal has access to $AGENT_APP"
-    else
-        report_deployable "Client may call agent" "no CAN_USE for $CLIENT_APP on $AGENT_APP; deploy.sh grants it"
-    fi
-    AGENT_SP="$(dbx apps get "$AGENT_APP" | field service_principal_client_id)"
-    while read -r TOOL_ID SPACE_ID; do
-        [ -n "$SPACE_ID" ] || continue
-        if dbx permissions get genie "$SPACE_ID" | grep -q "$AGENT_SP"; then
-            report PASS "Agent may use Genie ($TOOL_ID)" "$AGENT_APP's service principal has access"
+    if [ -n "$APP_JSON" ]; then
+        UNGRANTED="$(python3 -c '
+import json, sys
+KEYS = ("user_name", "group_name", "service_principal_name")
+def principals(acl, level):
+    return {e.get(k) for e in acl.get("access_control_list", []) for k in KEYS if e.get(k)
+            if any(p.get("permission_level") in level for p in e.get("all_permissions", []))}
+client, agent = json.loads(sys.argv[1]), json.loads(sys.argv[2])
+print(" ".join(sorted(principals(client, {"CAN_USE"}) - principals(agent, {"CAN_USE", "CAN_MANAGE"}))))' \
+            "$(dbx apps get-permissions "$CLIENT_APP")" "$(dbx apps get-permissions "$AGENT_APP")")"
+        if [ -z "$UNGRANTED" ]; then
+            report PASS "Users may call agent" "everyone with CAN_USE on $CLIENT_APP can use $AGENT_APP"
         else
-            report_deployable "Agent may use Genie ($TOOL_ID)" "run data/genie.py ... --grant-app $AGENT_APP (README step 11)"
+            report_deployable "Users may call agent" "no CAN_USE on $AGENT_APP for: $UNGRANTED; deploy.sh grants it"
         fi
-    done <<< "$GENIE_SPACES"
+    fi
 else
     report_deployable "Agent app" "$AGENT_APP not deployed; ./deploy.sh deploys it"
 fi

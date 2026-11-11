@@ -11,14 +11,16 @@ Two identities matter, and they are easy to conflate:
     memory by actor, so what it learns about one user is not recalled for
     another.
   * The **session** is one conversation. The agent namespaces sessions by the
-    authenticated caller, which is this app's service principal for every user,
-    so the browser's session id is hashed together with the user's email here.
-    Otherwise two users sending the same id would share a conversation.
+    authenticated caller, which is the signed-in user (the call carries their
+    token; see `agent_auth_headers`). The browser's session id is also hashed
+    with the user's email here, so a session id identifies nothing on its own.
 
 The pure helpers (`session_key`, `invocation_body`, `resume_body`,
 `normalize_output`) hold all of the logic and are tested without a network in
 `tests/test_agent.py`.
 """
+import base64
+import json
 import logging
 import uuid
 from typing import Any, Optional
@@ -27,7 +29,7 @@ import requests
 from fastapi import HTTPException
 
 from config import settings
-from middleware.auth import get_agent_app_client
+from middleware.auth import agent_auth_headers
 
 logger = logging.getLogger(__name__)
 
@@ -128,8 +130,19 @@ def _error_detail(response: requests.Response) -> str:
     return f"Agent returned HTTP {response.status_code}."
 
 
-def invoke(body: dict) -> dict:
-    """POST one invocation and return the normalized result. Blocking."""
+def token_scopes(token: Optional[str]) -> str:
+    """The scope claim of an OAuth JWT, for diagnosing a rejected call. Never the token itself."""
+    try:
+        payload = token.split(".")[1]  # type: ignore[union-attr]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    except Exception:
+        return "unreadable"
+    scope = claims.get("scope") or claims.get("scp") or ""
+    return " ".join(scope) if isinstance(scope, list) else str(scope)
+
+
+def invoke(body: dict, user_token: Optional[str]) -> dict:
+    """POST one invocation as the signed-in user and return the normalized result. Blocking."""
     url = settings.get_agent_app_url()
     if not url:
         raise HTTPException(
@@ -139,7 +152,7 @@ def invoke(body: dict) -> dict:
 
     headers = {"Content-Type": "application/json", "X-Routing-Key": body["session_id"]}
     if not settings.agent_app_is_local():
-        headers.update(get_agent_app_client().config.authenticate())
+        headers.update(agent_auth_headers(user_token))
 
     try:
         response = requests.post(
@@ -159,10 +172,20 @@ def invoke(body: dict) -> dict:
         raise HTTPException(status_code=502, detail="Could not reach the agent app.")
 
     if response.status_code in (301, 302, 303, 307, 308, 401, 403):
-        logger.error("Agent app rejected this app's credentials: HTTP %s", response.status_code)
+        # The proxy's error text and the token's scopes say which fix applies
+        # (missing CAN_USE, or a token minted before the `apps` scope was added).
+        logger.error(
+            "Agent app rejected the signed-in user's credentials: HTTP %s; token scopes: %s; proxy said: %s",
+            response.status_code,
+            token_scopes(user_token),
+            (response.headers.get("www-authenticate") or response.text or "")[:300].replace("\n", " "),
+        )
         raise HTTPException(
             status_code=502,
-            detail="The agent app rejected this app's credentials. Grant this app's service principal CAN_USE on it.",
+            detail=(
+                "The agent app rejected your credentials. You need CAN_USE on the agent app "
+                "(deploy.sh grants the client app's users), and the client needs the `apps` scope."
+            ),
         )
     if not response.ok:
         raise HTTPException(status_code=502, detail=_error_detail(response))
