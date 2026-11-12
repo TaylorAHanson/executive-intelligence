@@ -1,39 +1,50 @@
 """The agent's per-context settings: prompt and tools, edited by admins in Settings.
 
-Settings live in a Unity Catalog table (`settings.get_agent_settings_table`),
-one row per app context. Every read and write runs as the signed-in user:
+Settings are app state, not business data, so they live in the app's own
+Lakebase (`agent_context_settings`, created by `database.init_db`) and are read
+and written as the app's service principal. That makes the admin check
+(`require_admin`, against `ADMIN_GROUP`) the only gate on writes. What the
+settings control cannot widen anyone's access: every data tool they name runs
+as the signed-in user.
 
-  * The tray reads the current context's row on each turn and sends it to the
-    agent as `input.settings` (`for_context`). Users need SELECT on the table;
-    without it the agent falls back to its defaults, and the log says why.
-  * The Settings page writes rows as the signed-in admin (`save`, `reset`). Only
-    the admin group has MODIFY (`data/admin_grants.sql`), so Unity Catalog
-    enforces the rule `is_admin` checks for the UI.
+  * The tray sends the current context's settings to the agent as
+    `input.settings` on each turn (`for_context`). A database that is down or
+    still waking costs the saved overrides for that turn, never the turn.
+  * A context's defaults are the agent's (`agent/contexts.py`, read from its
+    `/api/contexts`) plus the bundle's Genie bindings (`GENIE_BINDINGS`). A row
+    overrides them field by field; NULL keeps the default.
 
-Defaults are the agent's (`agent/contexts.py`), read from its `/api/contexts`
-route. A context with no row, or a NULL column, uses them.
+Genie titles and descriptions for the bundle's bindings are read from Genie as
+the signed-in user and cached, so the service principal needs no access to any
+space.
 """
-import json
 import logging
 import threading
 import time
 from typing import Any, Optional
 
+import psycopg2
 import requests
 from databricks.sdk import WorkspaceClient
 from fastapi import HTTPException
+from psycopg2.extras import Json
 
+import database
 from config import settings
 from middleware.auth import agent_auth_headers
-from services.sql import run_query
 
 logger = logging.getLogger(__name__)
 
 _ADMIN_TTL_SECONDS = 60
 _DEFAULTS_TTL_SECONDS = 300
+_SPACE_TTL_SECONDS = 3600
+_SPACE_MISS_TTL_SECONDS = 600
 _lock = threading.Lock()
 _admin_cache: dict[str, tuple[float, bool]] = {}
 _defaults_cache: Optional[tuple[float, dict]] = None
+_space_cache: dict[str, tuple[float, Optional[dict]]] = {}
+
+_DB_ERRORS = (database.LakebaseUnavailable, psycopg2.Error)
 
 
 def is_admin(client: WorkspaceClient, email: str) -> bool:
@@ -63,75 +74,109 @@ def require_admin(client: WorkspaceClient, email: str) -> None:
         )
 
 
-def _table() -> str:
-    try:
-        return settings.get_agent_settings_table()
-    except ValueError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# --- Rows ---------------------------------------------------------------------
+
+_SELECT = (
+    "SELECT context_id, prompt, tools, updated_by, "
+    "to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') FROM agent_context_settings"
+)
 
 
-def _row(row: dict[str, Any]) -> dict:
-    try:
-        tools = json.loads(row.get("tools") or "{}")
-    except ValueError:
-        logger.warning("Agent settings for %r have unreadable tools JSON; ignoring it.", row.get("context_id"))
-        tools = {}
+def _row(values: tuple) -> dict:
+    context_id, prompt, tools, updated_by, updated_at = values
     return {
-        "context_id": row.get("context_id"),
-        "prompt": row.get("prompt"),
+        "context_id": context_id,
+        "prompt": prompt,
         "tools": tools if isinstance(tools, dict) else {},
-        "updated_by": row.get("updated_by"),
-        "updated_at": row.get("updated_at"),
+        "updated_by": updated_by,
+        "updated_at": updated_at,
     }
 
 
-def read_all(client: WorkspaceClient) -> dict[str, dict]:
+def _unavailable(e: Exception) -> HTTPException:
+    logger.error("The app database is unavailable: %s", e)
+    return HTTPException(status_code=503, detail="The app's database is unavailable. Try again in a minute.")
+
+
+def read_all() -> dict[str, dict]:
     """Every context's saved settings, keyed by context id."""
-    result = run_query(
-        client,
-        f"SELECT context_id, prompt, tools, updated_by, CAST(updated_at AS STRING) AS updated_at FROM {_table()}",
-    )
-    return {row["context_id"]: row for row in map(_row, result["rows"])}
+    try:
+        rows = database.run(lambda cur: (cur.execute(_SELECT), cur.fetchall())[1])
+    except _DB_ERRORS as e:
+        raise _unavailable(e)
+    return {row["context_id"]: row for row in map(_row, rows)}
+
+
+def save(context_id: str, prompt: Optional[str], tools: dict, email: str) -> None:
+    try:
+        database.run(lambda cur: cur.execute(
+            "INSERT INTO agent_context_settings (context_id, prompt, tools, updated_by) "
+            "VALUES (%s, %s, %s, %s) "
+            "ON CONFLICT (context_id) DO UPDATE SET prompt = EXCLUDED.prompt, tools = EXCLUDED.tools, "
+            "updated_by = EXCLUDED.updated_by, updated_at = now()",
+            (context_id, prompt, Json(tools), email),
+        ))
+    except _DB_ERRORS as e:
+        raise _unavailable(e)
+
+
+def reset(context_id: str) -> None:
+    try:
+        database.run(lambda cur: cur.execute(
+            "DELETE FROM agent_context_settings WHERE context_id = %s", (context_id,)
+        ))
+    except _DB_ERRORS as e:
+        raise _unavailable(e)
+
+
+# --- Defaults -----------------------------------------------------------------
+
+
+def _space_metadata(client: WorkspaceClient, space_id: str) -> Optional[dict]:
+    """A Genie space's title and description, read as the caller and cached per space."""
+    now = time.monotonic()
+    with _lock:
+        cached = _space_cache.get(space_id)
+        if cached and now < cached[0]:
+            return cached[1]
+    try:
+        space = client.genie.get_space(space_id)
+        meta: Optional[dict] = {"title": space.title or "", "description": space.description or ""}
+    except Exception as e:
+        logger.info("Genie space %s not readable by the caller: %s", space_id, e)
+        meta = None
+    with _lock:
+        _space_cache[space_id] = (now + (_SPACE_TTL_SECONDS if meta else _SPACE_MISS_TTL_SECONDS), meta)
+    return meta
+
+
+def default_genie_spaces(client: WorkspaceClient, context_id: str) -> list[dict]:
+    """The bundle's Genie bindings for `context_id`, with titles and descriptions from Genie."""
+    spaces = []
+    for binding in settings.get_genie_bindings().get(context_id, []):
+        meta = _space_metadata(client, binding["space_id"]) or {"title": "", "description": ""}
+        spaces.append({**binding, **meta})
+    return spaces
 
 
 def for_context(client: WorkspaceClient, context_id: str) -> Optional[dict]:
-    """What the agent receives as `input.settings` for this context, or None for its defaults.
-
-    Never fails the turn: a missing table or grant logs a warning and the agent
-    answers with its defaults instead.
-    """
+    """What the agent receives as `input.settings` for this context, or None for its defaults."""
     try:
-        result = run_query(
-            client,
-            f"SELECT context_id, prompt, tools FROM {_table()} WHERE context_id = :context_id",
-            {"context_id": context_id},
-            max_rows=1,
-        )
-    except HTTPException as e:
-        logger.warning("Could not read agent settings for %r; using the agent's defaults: %s", context_id, e.detail)
+        rows = database.run(lambda cur: (
+            cur.execute(f"{_SELECT} WHERE context_id = %s", (context_id,)),
+            cur.fetchall(),
+        )[1]) if settings.lakebase_configured() else []
+    except _DB_ERRORS as e:
+        logger.warning("Could not read agent settings for %r; using the defaults: %s", context_id, e)
+        rows = []
+    row: dict[str, Any] = _row(rows[0]) if rows else {}
+    tools = row.get("tools") or {}
+    genie = tools.get("genie")
+    if genie is None:
+        genie = default_genie_spaces(client, context_id)
+    if not row and not genie:
         return None
-    if not result["rows"]:
-        return None
-    row = _row(result["rows"][0])
-    return {"prompt": row["prompt"], "tools": row["tools"]}
-
-
-def save(client: WorkspaceClient, context_id: str, prompt: Optional[str], tools: dict, email: str) -> None:
-    run_query(
-        client,
-        f"MERGE INTO {_table()} t "
-        "USING (SELECT :context_id AS context_id, :prompt AS prompt, :tools AS tools, :email AS email) s "
-        "ON t.context_id = s.context_id "
-        "WHEN MATCHED THEN UPDATE SET prompt = s.prompt, tools = s.tools, "
-        "updated_by = s.email, updated_at = current_timestamp() "
-        "WHEN NOT MATCHED THEN INSERT (context_id, prompt, tools, updated_by, updated_at) "
-        "VALUES (s.context_id, s.prompt, s.tools, s.email, current_timestamp())",
-        {"context_id": context_id, "prompt": prompt, "tools": json.dumps(tools), "email": email},
-    )
-
-
-def reset(client: WorkspaceClient, context_id: str) -> None:
-    run_query(client, f"DELETE FROM {_table()} WHERE context_id = :context_id", {"context_id": context_id})
+    return {"prompt": row.get("prompt"), "tools": {"builtin": tools.get("builtin"), "genie": genie}}
 
 
 def agent_defaults(user_token: Optional[str]) -> dict:

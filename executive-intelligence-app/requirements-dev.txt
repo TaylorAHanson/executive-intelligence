@@ -1,0 +1,5 @@
+# Local development and tests only; the deployed app installs requirements.txt.
+
+# A bundled PostgreSQL server, so ./dev.sh and tests/test_agent_settings.py need
+# no Docker and no workspace database (server/database.py, LOCAL_POSTGRES_DIR).
+pixeltable-pgserver

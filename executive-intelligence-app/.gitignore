@@ -5,6 +5,9 @@ server/venv/
 venv/
 .pytest_cache/
 
+# The bundled local Postgres (dev.sh, LOCAL_POSTGRES_DIR).
+.pgdata/
+
 # Secrets — never commit. Copy .env.example to .env instead.
 .env
 .env.*

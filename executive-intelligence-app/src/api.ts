@@ -56,11 +56,14 @@ export interface ContextAgentSettings {
   label: string
   default_prompt: string
   default_builtin_tools: string[]
+  /** The deployment's Genie bindings for this context. */
+  default_genie_spaces: GenieSpaceSetting[]
   /** null: the default prompt applies. */
   prompt: string | null
   /** null: the default built-in tools apply. */
   builtin_tools: string[] | null
-  genie_spaces: GenieSpaceSetting[]
+  /** null: the default Genie spaces apply. */
+  genie_spaces: GenieSpaceSetting[] | null
   updated_by: string | null
   updated_at: string | null
 }
@@ -74,7 +77,7 @@ export interface AgentSettings {
 export interface ContextAgentSettingsUpdate {
   prompt: string | null
   builtin_tools: string[] | null
-  genie_spaces: Omit<GenieSpaceSetting, 'title'>[]
+  genie_spaces: Omit<GenieSpaceSetting, 'title'>[] | null
 }
 
 export type AgentMessage =

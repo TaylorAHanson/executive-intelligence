@@ -7,6 +7,8 @@ list of what the app can be configured with, and one place to change a default.
 Deployed values are set in `databricks.yml` under the app's `env:` block. Local
 values come from `.env`, which `dev.sh` sources.
 """
+import functools
+import logging
 import os
 import re
 
@@ -96,30 +98,53 @@ def get_data_object(name: str) -> str:
     return f"`{catalog}`.`{schema}`.`{name}`"
 
 
-#: The agent's per-context settings, next to the contract views. Not a contract
-#: view: the app owns it (data/views/agent_settings.sql).
-AGENT_SETTINGS_TABLE = "agent_context_settings"
-
-
-def get_agent_settings_table() -> str:
-    """The quoted, fully qualified settings table. Raises ValueError like `get_data_object`."""
-    catalog, schema = get_data_catalog(), get_data_schema()
-    if not catalog or not schema:
-        raise ValueError("DATA_CATALOG and DATA_SCHEMA are not set. Set them in databricks.yml (or .env locally).")
-    for label, part in (("DATA_CATALOG", catalog), ("DATA_SCHEMA", schema)):
-        if not _UC_NAME_RE.match(part):
-            raise ValueError(f"{label} must be letters, digits, underscores, and hyphens only.")
-    return f"`{catalog}`.`{schema}`.`{AGENT_SETTINGS_TABLE}`"
-
-
 def get_admin_group() -> str:
     """Workspace group whose members see Settings and edit the agent (bundle variable admin_group).
 
-    The app's check only hides the page. Unity Catalog enforces the same rule,
-    because the settings table grants MODIFY to this group alone
-    (data/admin_grants.sql) and every write runs as the signed-in user.
+    This check is the only gate on Settings: the rows live in the app's own
+    Lakebase, which the app writes as its service principal.
     """
     return os.environ.get("ADMIN_GROUP", "admins")
+
+
+_BINDING_CONTEXT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+_BINDING_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,23}$")
+_BINDING_SPACE_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def get_genie_bindings() -> dict[str, list[dict]]:
+    """Each context's default Genie spaces, from GENIE_BINDINGS (bundle variable genie_bindings).
+
+    The format is `context:tool_name:space_id`, separated by spaces (the CLI's
+    `--var` splits on commas, so the bundle variable cannot use them; commas
+    are accepted here too). A malformed
+    entry is logged and skipped rather than failing startup, so one typo costs
+    one binding. Parsed once per process; callers get copies.
+    """
+    return {context: [dict(b) for b in spaces] for context, spaces in _parse_genie_bindings().items()}
+
+
+@functools.lru_cache(maxsize=1)
+def _parse_genie_bindings() -> dict[str, list[dict]]:
+    bindings: dict[str, list[dict]] = {}
+    for entry in os.environ.get("GENIE_BINDINGS", "").replace(",", " ").split():
+        parts = entry.split(":")
+        if (
+            len(parts) != 3
+            or not _BINDING_CONTEXT_RE.match(parts[0])
+            or not _BINDING_NAME_RE.match(parts[1])
+            or not _BINDING_SPACE_RE.match(parts[2])
+        ):
+            logging.getLogger(__name__).warning(
+                "Ignoring GENIE_BINDINGS entry %r; expected context:tool_name:space_id.", entry
+            )
+            continue
+        context, name, space_id = parts
+        if any(b["name"] == name for b in bindings.get(context, [])):
+            logging.getLogger(__name__).warning("Ignoring a second %r binding for %r.", name, context)
+            continue
+        bindings.setdefault(context, []).append({"name": name, "space_id": space_id})
+    return bindings
 
 
 def is_running_in_databricks_apps() -> bool:
@@ -177,19 +202,25 @@ def get_agent_timeout_seconds() -> float:
 
 # --- Lakebase (Postgres) ----------------------------------------------------
 #
-# Attaching a `postgres` resource to the app makes Databricks Apps inject the
-# PG* variables below. Their presence is what tells the app a database exists —
-# there is no separate "enabled" flag to forget to set.
+# The bundle attaches the app's Lakebase project as a `postgres` resource, which
+# makes Databricks Apps inject the PG* variables below. Locally, `dev.sh` sets
+# LOCAL_POSTGRES_DIR instead and the app runs a bundled Postgres there.
+
+
+def get_local_postgres_dir() -> str:
+    """Data directory for the bundled local Postgres. Never used in a deployment."""
+    if is_running_in_databricks_apps() or os.environ.get("PGHOST"):
+        return ""
+    return os.environ.get("LOCAL_POSTGRES_DIR", "")
 
 
 def lakebase_configured() -> bool:
-    """Whether a Lakebase instance is attached.
+    """Whether the app has a database: an attached Lakebase, or the local one.
 
-    The app must run without one: this template's hello-world path uses no
-    database at all, and a local checkout has no PGHOST. Everything database
-    related checks this first and degrades rather than failing to start.
+    The app still starts without one, so the dashboards keep working; Settings
+    then shows the agent's defaults and refuses to save.
     """
-    return bool(os.environ.get("PGHOST"))
+    return bool(os.environ.get("PGHOST")) or bool(get_local_postgres_dir())
 
 
 def get_lakebase_config() -> dict:
@@ -209,14 +240,13 @@ def get_lakebase_config() -> dict:
     }
 
 
-def get_lakebase_instance_name() -> str:
-    """The database instance / project to mint credentials against.
+def get_lakebase_endpoint() -> str:
+    """The Lakebase endpoint to mint credentials against.
 
-    Set from the bundle so it always matches the instance the app is attached
-    to. Without it the app cannot ask for a token, because the credential APIs
-    are addressed by instance name.
+    `projects/<project>/branches/production/endpoints/primary`, set by the
+    bundle from the attached project. Without it the app cannot ask for a token.
     """
-    return os.environ.get("LAKEBASE_INSTANCE_NAME", "")
+    return os.environ.get("LAKEBASE_ENDPOINT", "")
 
 
 # --- Third-party secrets ----------------------------------------------------
@@ -240,6 +270,6 @@ def get_db_schema() -> str:
     does not own `public`, and Postgres 15+ no longer grants CREATE on `public`
     to everyone — so an unqualified CREATE TABLE fails with "permission denied
     for schema public". A dedicated schema the app's role owns avoids that, and
-    keeps two apps sharing an instance from colliding.
+    keeps two apps sharing a project from colliding.
     """
-    return os.environ.get("APP_DB_SCHEMA", "app")
+    return os.environ.get("APP_DB_SCHEMA", "exec_intel")

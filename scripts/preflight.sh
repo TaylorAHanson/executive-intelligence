@@ -2,7 +2,7 @@
 # Check that a workspace has what Executive Intelligence needs. Read-only.
 #
 #   scripts/preflight.sh -p <profile> --catalog <catalog> [--schema exec_intel] [--warehouse <id>]
-#                        [--app exec-intel-app] [--before-deploy]
+#                        [--app exec-intel-app] [--genie-bindings <genie_bindings>] [--before-deploy]
 #
 # Prints one line per check and exits 1 if any check FAILs. `deploy.sh` runs it
 # with --before-deploy, which reports checks that only a deploy can satisfy
@@ -20,6 +20,7 @@ SCHEMA="exec_intel"
 WAREHOUSE=""
 WAREHOUSE_NAME="Serverless Starter Warehouse"
 CLIENT_APP="exec-intel-app"
+GENIE_BINDINGS=""
 BEFORE_DEPLOY=false
 # Keep in step with DATA_OBJECTS in executive-intelligence-app/server/config/settings.py.
 CONTRACT_VIEWS="v_customers v_shipments v_revenue_monthly v_design_wins v_pipeline v_revenue_outlook v_contracts v_device_footprint v_customer_signals v_insights"
@@ -33,6 +34,7 @@ while [ $# -gt 0 ]; do
         --schema) SCHEMA="$2"; shift 2 ;;
         --warehouse) WAREHOUSE="$2"; shift 2 ;;
         --app) CLIENT_APP="$2"; shift 2 ;;
+        --genie-bindings) GENIE_BINDINGS="$2"; shift 2 ;;
         --before-deploy) BEFORE_DEPLOY=true; shift ;;
         -h|--help) usage ;;
         *) echo "Unknown argument: $1" >&2; usage 1 ;;
@@ -133,30 +135,32 @@ else
 fi
 
 # --- Agent tools and traces --------------------------------------------------------
-# Genie spaces are bound per context in the agent_context_settings table (README step 7).
+# Each context's default Genie spaces come from the genie_bindings bundle variable (README step 8).
 AGENT_TOML="$ROOT/executive-intelligence-agent/agent.toml"
-SETTINGS_TABLE="$CATALOG.$SCHEMA.agent_context_settings"
-if ! dbx tables get "$SETTINGS_TABLE" >/dev/null; then
-    report FAIL "Agent settings" "$SETTINGS_TABLE missing; data/load.py --steps views creates it"
-elif [ -z "$WAREHOUSE" ]; then
-    report WARN "Agent settings" "no warehouse to read $SETTINGS_TABLE with; Genie bindings not checked"
+if [ -z "$GENIE_BINDINGS" ]; then
+    report WARN "Genie bindings" "none; the tray has no data tools until an admin adds them in Settings (README step 8)"
+fi
+for ENTRY in ${GENIE_BINDINGS//,/ }; do
+    IFS=: read -r CONTEXT_ID TOOL_ID SPACE_ID <<< "$ENTRY"
+    if [ -z "$SPACE_ID" ]; then
+        report FAIL "Genie binding $ENTRY" "expected context:tool_name:space_id"
+    elif SPACE="$(dbx genie get-space "$SPACE_ID")"; then
+        report PASS "Genie space ($CONTEXT_ID: $TOOL_ID)" "$(echo "$SPACE" | field title) ($SPACE_ID)"
+    else
+        report FAIL "Genie space ($CONTEXT_ID: $TOOL_ID)" "$SPACE_ID not in this workspace; data/genie.py prints the right entry"
+    fi
+done
+
+# The app keeps Settings in its own Lakebase project, which the bundle creates.
+LAKEBASE_PROJECT="$CLIENT_APP-v1"
+if ! dbx postgres list-projects >/dev/null; then
+    report FAIL "Lakebase" "Lakebase Autoscaling is not available to you in this workspace; the bundle's postgres_projects needs it"
+elif PROJECT="$(dbx postgres get-project "projects/$LAKEBASE_PROJECT")"; then
+    report PASS "Lakebase project" "$LAKEBASE_PROJECT, $(echo "$PROJECT" | python3 -c 'import json, sys
+s = json.load(sys.stdin).get("status", {}).get("default_endpoint_settings", {})
+print(f"{s.get(\"autoscaling_limit_min_cu\")}-{s.get(\"autoscaling_limit_max_cu\")} CU, suspends after {s.get(\"suspend_timeout_duration\", \"(never)\")}")')"
 else
-    GENIE_SPACES="$(dbx api post /api/2.0/sql/statements --json "$(python3 -c 'import json, sys
-print(json.dumps({"warehouse_id": sys.argv[1], "wait_timeout": "30s",
-                  "statement": f"SELECT context_id, tools FROM {sys.argv[2]}"}))' "$WAREHOUSE" "$SETTINGS_TABLE")" \
-        | python3 -c 'import json, sys
-for context, tools in json.load(sys.stdin).get("result", {}).get("data_array") or []:
-    for space in json.loads(tools or "{}").get("genie") or []:
-        print(context, space.get("name"), space.get("space_id"))')"
-    [ -n "$GENIE_SPACES" ] || report WARN "Genie bindings" "none in $SETTINGS_TABLE; the tray has no data tools (README step 7)"
-    while read -r CONTEXT_ID TOOL_ID SPACE_ID; do
-        [ -n "$SPACE_ID" ] || continue
-        if SPACE="$(dbx genie get-space "$SPACE_ID")"; then
-            report PASS "Genie space ($CONTEXT_ID: $TOOL_ID)" "$(echo "$SPACE" | field title) ($SPACE_ID)"
-        else
-            report FAIL "Genie space ($CONTEXT_ID: $TOOL_ID)" "$SPACE_ID not in this workspace; run data/genie.py --bind or fix it in Settings"
-        fi
-    done <<< "$GENIE_SPACES"
+    report_deployable "Lakebase project" "$LAKEBASE_PROJECT missing; the bundle creates it on deploy"
 fi
 
 EXPERIMENT="$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["tracing"]["experiment_name"])' "$AGENT_TOML")"
@@ -166,7 +170,7 @@ print(tags.get("mlflow.experiment.databricksTraceDestinationPath", ""))' 2>/dev/
 if [ -n "$TRACE_TABLES" ]; then
     report PASS "Trace storage" "$EXPERIMENT -> $TRACE_TABLES"
 else
-    report WARN "Trace storage" "$EXPERIMENT not linked to Unity Catalog; scripts/trace_storage.py (README step 8)"
+    report WARN "Trace storage" "$EXPERIMENT not linked to Unity Catalog; scripts/trace_storage.py (README step 9)"
 fi
 
 # --- Apps --------------------------------------------------------------------------

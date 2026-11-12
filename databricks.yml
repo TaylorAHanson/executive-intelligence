@@ -33,6 +33,7 @@ sync:
     - executive-intelligence-app/tests
     - executive-intelligence-app/**/__pycache__
     - executive-intelligence-app/.env*
+    - executive-intelligence-app/.pgdata
   # FastAPI serves the built frontend from dist/, which .gitignore excludes.
   # branding/ is gitignored too; ship it so a rebuild in the app keeps the theme.
   include:
@@ -73,11 +74,43 @@ variables:
   admin_group:
     description: >-
       Workspace group whose members see Settings and edit each context's agent
-      prompt and tools. Give it MODIFY on the settings table with
-      data/load.py --admin-group <group>. Use a dedicated group in prod.
+      prompt and tools. Use a dedicated group in prod.
     default: "admins"
+  genie_bindings:
+    description: >-
+      Each app context's default Genie spaces, as context:tool_name:space_id,
+      space-separated (--var splits on commas), e.g.
+      "executive:exec_data:<id> customer-intelligence:ci_data:<id>".
+      data/genie.py prints the entry for each space it creates. An admin's
+      Settings override these; "Reset to defaults" brings them back.
+    default: ""
 
 resources:
+  # The app's own Postgres: Settings rows and any other app state that is not
+  # business data. Business data stays in Unity Catalog and is read as the user.
+  # Autoscaling with scale-to-zero: the compute suspends after five idle
+  # minutes and wakes on the next connection, which takes a few seconds.
+  # Named after the app with a -vN suffix, so a breaking re-create is a
+  # deliberate rename; renaming the app starts an empty database.
+  postgres_projects:
+    app_db:
+      project_id: ${var.app_name}-v1
+      display_name: "${var.app_name} (Executive Intelligence app state)"
+      pg_version: 17
+      default_endpoint_settings:
+        autoscaling_limit_min_cu: 0.5
+        autoscaling_limit_max_cu: 1
+        suspend_timeout_duration: "300s"
+      lifecycle:
+        prevent_destroy: true
+      permissions:
+        # Authoritative: re-grant the deployer CAN_MANAGE, or applying this
+        # strips it and the app's `postgres` attach below fails.
+        - level: CAN_MANAGE
+          user_name: ${workspace.current_user.userName}
+        - level: CAN_USE
+          service_principal_name: ${resources.apps.app.service_principal_client_id}
+
   apps:
     app:
       name: ${var.app_name}
@@ -92,12 +125,15 @@ resources:
           sql_warehouse:
             id: ${var.warehouse_id}
             permission: CAN_USE
-
-      # LAKEBASE, THIRD-PARTY SECRETS
-      # -----------------------------
-      # See ../app-template/databricks.yml for the commented `database_instances`,
-      # `postgres`, and `secret` resource blocks. The backend code for Lakebase
-      # (server/database.py) is present and stays dormant until PGHOST is set.
+        # Injects PGHOST, PGPORT, PGUSER, PGDATABASE, and PGSSLMODE; the app
+        # mints its password as its service principal (server/database.py).
+        # The default branch is "production"; the database id uses a hyphen,
+        # the Postgres database name an underscore (databricks_postgres).
+        - name: postgres
+          postgres:
+            branch: projects/${resources.postgres_projects.app_db.project_id}/branches/production
+            database: projects/${resources.postgres_projects.app_db.project_id}/branches/production/databases/databricks-postgres
+            permission: CAN_CONNECT_AND_CREATE
 
       config:
         command:
@@ -133,6 +169,11 @@ resources:
             value: ${var.synthetic_data}
           - name: ADMIN_GROUP
             value: ${var.admin_group}
+          - name: GENIE_BINDINGS
+            value: ${var.genie_bindings}
+          # The endpoint the app mints its Lakebase credential against.
+          - name: LAKEBASE_ENDPOINT
+            value: projects/${resources.postgres_projects.app_db.project_id}/branches/production/endpoints/primary
 
       # ON-BEHALF-OF USER AUTHORIZATION
       # -------------------------------

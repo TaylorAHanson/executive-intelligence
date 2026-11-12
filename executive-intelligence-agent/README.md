@@ -162,11 +162,11 @@ Use `agentbricks init --framework langgraph --disable-chat-app` for API-only out
 - Add local tools under `agent/tools/`; modules are auto-discovered.
 - Add MCP servers in `agent/mcps.py` or with `agentbricks tools add mcp`.
 - Each context's prompt, built-in tools, and Genie spaces can be overridden per turn by
-  `input.settings`, which the client app reads from its `agent_context_settings` table (edited on its
-  Settings page) and merges over the defaults in `agent/contexts.py`. `GET /api/contexts` returns
-  those defaults. A Genie space named `<name>` becomes the tools `<name>_ask`, `<name>_poll`, and
-  `<name>_query_result`; the usual bindings are `exec_data` for `executive` and `ci_data` for
-  `customer-intelligence` (`../data/genie.py --space <executive|customer> --bind <context>:<name>`).
+  `input.settings`, which the client app builds from its Settings page and its `genie_bindings`
+  bundle variable, and which the agent merges over the defaults in `agent/contexts.py`.
+  `GET /api/contexts` returns those defaults. A Genie space named `<name>` becomes the tools
+  `<name>_ask`, `<name>_poll`, and `<name>_query_result`; the usual bindings are `exec_data` for
+  `executive` and `ci_data` for `customer-intelligence` (`../data/genie.py` prints each entry).
   No space is bound in `agent.toml`. Settings come from the caller, which is safe because Genie runs
   as the signed-in user, whose token the client app forwards: a caller can only reach data they
   could query anyway. `[auth.user]` in `agent.toml` keeps the `genie` scope in the client's

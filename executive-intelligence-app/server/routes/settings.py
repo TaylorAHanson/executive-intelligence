@@ -1,8 +1,8 @@
 """Settings: each app context's agent prompt and tools. Admins only.
 
-Every route checks the caller is in the admin group (`ADMIN_GROUP`), and every
-write runs as that caller, so Unity Catalog's MODIFY grant on the settings
-table is the real gate. See `services/agent_settings.py`.
+Every route checks the caller is in the admin group (`ADMIN_GROUP`). That is
+the only gate: the rows live in the app's own Lakebase, which the app writes as
+its service principal. See `services/agent_settings.py`.
 
 The field limits below match what the agent accepts (`agent/contexts.py`);
 anything the agent would drop is rejected here instead, so an admin sees why.
@@ -34,7 +34,8 @@ class ContextSettingsUpdate(BaseModel):
     prompt: Optional[str] = Field(default=None, max_length=8000)
     #: None keeps the context's default local tools.
     builtin_tools: Optional[list[str]] = Field(default=None, max_length=50)
-    genie_spaces: list[GenieSpace] = Field(default_factory=list, max_length=10)
+    #: None keeps the bundle's Genie bindings for the context (GENIE_BINDINGS).
+    genie_spaces: Optional[list[GenieSpace]] = Field(default=None, max_length=10)
 
 
 def _admin_client(
@@ -51,7 +52,7 @@ def list_contexts(
     user_token: Optional[str] = Depends(get_user_token),
 ) -> dict:
     defaults = agent_settings.agent_defaults(user_token)
-    saved = agent_settings.read_all(client)
+    saved = agent_settings.read_all()
     contexts = []
     for context in defaults.get("contexts", []):
         row = saved.get(context["id"]) or {}
@@ -61,9 +62,10 @@ def list_contexts(
             "label": context["label"],
             "default_prompt": context["prompt"],
             "default_builtin_tools": context["builtin_tools"],
+            "default_genie_spaces": agent_settings.default_genie_spaces(client, context["id"]),
             "prompt": row.get("prompt"),
             "builtin_tools": tools.get("builtin"),
-            "genie_spaces": tools.get("genie") or [],
+            "genie_spaces": tools.get("genie"),
             "updated_by": row.get("updated_by"),
             "updated_at": row.get("updated_at"),
         })
@@ -88,19 +90,19 @@ def save_context(
     known = {t["name"] for t in defaults.get("builtin_tools", [])}
     if update.builtin_tools is not None and (unknown := set(update.builtin_tools) - known):
         raise HTTPException(status_code=400, detail=f"Unknown built-in tools: {', '.join(sorted(unknown))}.")
-    names = [s.name for s in update.genie_spaces]
-    if len(set(names)) != len(names):
-        raise HTTPException(status_code=400, detail="Each Genie space needs a different tool name.")
-
-    # The title comes from Genie, read as this admin, which also proves the id is
-    # real and that the admin can open the space.
-    spaces = [
-        {**space.model_dump(), "title": agent_settings.genie_space(client, space.space_id)["title"]}
-        for space in update.genie_spaces
-    ]
+    spaces = None
+    if update.genie_spaces is not None:
+        names = [s.name for s in update.genie_spaces]
+        if len(set(names)) != len(names):
+            raise HTTPException(status_code=400, detail="Each Genie space needs a different tool name.")
+        # The title comes from Genie, read as this admin, which also proves the id
+        # is real and that the admin can open the space.
+        spaces = [
+            {**space.model_dump(), "title": agent_settings.genie_space(client, space.space_id)["title"]}
+            for space in update.genie_spaces
+        ]
     prompt = (update.prompt or "").strip() or None
     agent_settings.save(
-        client,
         context_id,
         prompt,
         {"builtin": update.builtin_tools, "genie": spaces},
@@ -110,8 +112,8 @@ def save_context(
 
 
 @router.delete("/agent/{context_id}", summary="Return one context to the agent's defaults")
-def reset_context(context_id: str = _CONTEXT_ID, client: WorkspaceClient = Depends(_admin_client)) -> dict:
-    agent_settings.reset(client, context_id)
+def reset_context(context_id: str = _CONTEXT_ID, _client: WorkspaceClient = Depends(_admin_client)) -> dict:
+    agent_settings.reset(context_id)
     return {"status": "reset"}
 
 

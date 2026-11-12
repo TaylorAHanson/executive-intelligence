@@ -212,9 +212,11 @@ endpoint from a page the SPA will handle. See "Adding a page" in
 
 ## Lakebase (Postgres)
 
-Optional, and off until you attach it — see the commented block in
-`databricks.yml`. The app detects the injected `PGHOST` and stays dormant
-without it, so the hello-world path needs no database.
+App state only (the Settings overrides today); business data stays in Unity
+Catalog. Deployed, it is the bundle's Lakebase Autoscaling project, which scales
+to zero; locally, a bundled Postgres in `.pgdata` (`LOCAL_POSTGRES_DIR`, set by
+`dev.sh`). With neither, `get_connection` raises `LakebaseUnavailable`, which
+callers turn into a 503 or a fallback, never a 500. Add tables to `init_db`.
 
 **Use `database.run(work)`, not `get_connection()` directly.** It owns the
 connection, the commit, the rollback, and a retry that matters more than it

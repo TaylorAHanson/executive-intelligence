@@ -37,6 +37,8 @@ VAR_ARGS=()
 DATA_CATALOG=""
 DATA_SCHEMA="exec_intel"
 WAREHOUSE_ID=""
+GENIE_BINDINGS=""
+APP_NAME=""
 
 usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
@@ -54,6 +56,8 @@ while [ $# -gt 0 ]; do
                 data_catalog=*) DATA_CATALOG="${2#*=}" ;;
                 data_schema=*) DATA_SCHEMA="${2#*=}" ;;
                 warehouse_id=*) WAREHOUSE_ID="${2#*=}" ;;
+                genie_bindings=*) GENIE_BINDINGS="${2#*=}" ;;
+                app_name=*) APP_NAME="${2#*=}" ;;
             esac
             shift 2 ;;
         --agent-only) DEPLOY_APP=false; shift ;;
@@ -92,6 +96,10 @@ if $PREFLIGHT && $DEPLOY_APP; then
     step "Checking the workspace (scripts/preflight.sh)"
     PREFLIGHT_ARGS=(-p "$PROFILE" --catalog "$DATA_CATALOG" --schema "$DATA_SCHEMA" --before-deploy)
     [ -n "$WAREHOUSE_ID" ] && PREFLIGHT_ARGS+=(--warehouse "$WAREHOUSE_ID")
+    [ -n "$GENIE_BINDINGS" ] && PREFLIGHT_ARGS+=(--genie-bindings "$GENIE_BINDINGS")
+    # The bundle's app_name defaults, by target (databricks.yml).
+    [ -n "$APP_NAME" ] || { [ "$TARGET" = prod ] && APP_NAME=exec-intel-app-prod || APP_NAME=exec-intel-app; }
+    PREFLIGHT_ARGS+=(--app "$APP_NAME")
     "$ROOT/scripts/preflight.sh" "${PREFLIGHT_ARGS[@]}" \
         || { echo "Preflight failed; fix the FAIL lines above, or rerun with --skip-preflight." >&2; exit 1; }
 fi

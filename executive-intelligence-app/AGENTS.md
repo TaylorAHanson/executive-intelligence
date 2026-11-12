@@ -193,6 +193,10 @@ With one user signed in, an unfiltered query returns exactly the rows you
 expected; the bug only appears once a second person has data, by which time it
 is in production. Write the `WHERE` clause first.
 
+A table of app-wide state has no owner to filter by; there, the route's own
+check is the whole gate. `agent_context_settings` is written only behind
+`require_admin`, and every turn reads it on purpose.
+
 ### Values go into SQL as parameters
 
 Never build SQL with f-strings, `.format()`, `%`, or concatenation. Use `:name`

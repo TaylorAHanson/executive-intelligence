@@ -31,7 +31,7 @@
 
 - **Account menu.** Click your initials at the top right to see who you're signed in as and open these release notes.
 - **Release notes.** A dot on your initials means there's a release you haven't read yet.
-- **Settings.** Admins choose each section's assistant instructions and data sources under the account menu > **Settings**.
+- **Settings.** Admins choose each section's assistant instructions and data sources under the account menu > **Settings**, and can restore a section's defaults.
 
 ### Changed
 

@@ -15,18 +15,21 @@ and uses it as the Postgres password. So:
     NOT kill a live connection. That is why `db_pool` recycles by age instead of
     watching for auth errors on existing sessions.
 
-**There are two credential APIs and you cannot tell which one you need from the
-name alone.** Instances created by a bundle since March 2026 are Autoscaling
-*projects*, which are not in the SDK's `DatabaseAPI` and must be reached over
-raw REST. Older Provisioned instances use the SDK. This module tries
-Autoscaling first, then Provisioned, and logs each attempt — if you are
-debugging connectivity, that log is the place to look.
+**The database is an Autoscaling project that scales to zero** (the bundle's
+`postgres_projects.app_db`). Its credential API is addressed by endpoint
+(`LAKEBASE_ENDPOINT`) and reached over REST. After five idle minutes the
+compute suspends, so the first connection after a quiet spell waits a few
+seconds while it wakes.
 
 **Minting is the app's own operation, so it uses the service principal.** This
 is a deliberate, documented exception to the OBO rule in `../AGENTS.md`: the app
-is authenticating *itself* to its own database, not reading a user's data. Rows
-that belong to a user still carry their identity, and any Unity Catalog access
-continues to run under their token.
+is authenticating *itself* to its own database, which holds app state such as
+Settings, never business data. Rows that belong to a user still carry their
+identity, and every Unity Catalog read continues to run under the user's token.
+
+**Locally there is no Lakebase.** `dev.sh` sets LOCAL_POSTGRES_DIR and this
+module starts a bundled Postgres in that directory (pixeltable-pgserver, a dev
+dependency), so `./dev.sh` needs no Docker and no workspace database.
 """
 from __future__ import annotations
 
@@ -34,7 +37,6 @@ import logging
 import os
 import threading
 import time
-import uuid
 from typing import Any, Callable, Optional, TypeVar
 
 import psycopg2
@@ -87,52 +89,51 @@ def _workspace_client() -> WorkspaceClient:
     return WorkspaceClient()
 
 
-def _mint_token(instance_name: str) -> str:
-    """Get a short-lived Postgres password for `instance_name`.
-
-    Tries the Autoscaling project API first, since that is what a bundle creates
-    today, then the Provisioned instance API.
-    """
-    client = _workspace_client()
-    failures: list[str] = []
-
-    # 1. Autoscaling projects. Not in the SDK, so this goes over raw REST. The
-    #    default branch of a project is always "production" — it is auto-created
-    #    and is NOT named after the instance.
-    endpoint = f"projects/{instance_name}/branches/production"
+def _mint_token(endpoint: str) -> str:
+    """Get a short-lived Postgres password for the Lakebase `endpoint`."""
     try:
-        response = client.api_client.do(
+        response = _workspace_client().api_client.do(
             "POST", "/api/2.0/postgres/credentials", body={"endpoint": endpoint}
         )
-        token = response.get("token")
-        if token:
-            logger.info("Minted a Lakebase credential via the Autoscaling API.")
-            return token
-        failures.append("Autoscaling: response contained no token")
     except Exception as e:  # noqa: BLE001
-        failures.append(f"Autoscaling: {e}")
-        logger.info("Autoscaling credential attempt failed, trying Provisioned: %s", e)
+        raise LakebaseUnavailable(f"Could not mint a credential for {endpoint!r}: {e}") from e
+    token = response.get("token")
+    if not token:
+        raise LakebaseUnavailable(f"The credential response for {endpoint!r} contained no token.")
+    logger.info("Minted a Lakebase credential.")
+    return token
 
-    # 2. Provisioned instances, through the SDK.
-    try:
-        credential = client.database.generate_database_credential(
-            request_id=str(uuid.uuid4()),
-            instance_names=[instance_name],
-        )
-        if credential.token:
-            logger.info("Minted a Lakebase credential via the Provisioned API.")
-            return credential.token
-        failures.append("Provisioned: response contained no token")
-    except Exception as e:  # noqa: BLE001
-        failures.append(f"Provisioned: {e}")
 
-    raise LakebaseUnavailable(
-        f"Could not mint a credential for '{instance_name}'. Attempts: " + " | ".join(failures)
-    )
+_local_server: Any = None
+_local_lock = threading.Lock()
+
+
+def _local_postgres_dsn(data_dir: str) -> str:
+    """Start (or reuse) the bundled local Postgres and return its connection URI.
+
+    The server outlives this process (`cleanup_mode=None`), so uvicorn's reloads
+    reconnect to it instead of starting another.
+    """
+    global _local_server
+    with _local_lock:
+        if _local_server is None:
+            try:
+                import pixeltable_pgserver as pgserver  # dev dependency (requirements-dev.txt)
+            except ImportError as e:
+                raise LakebaseUnavailable(
+                    "LOCAL_POSTGRES_DIR is set but pixeltable-pgserver is not installed. "
+                    "Run ./dev.sh, which installs requirements-dev.txt."
+                ) from e
+            os.makedirs(data_dir, exist_ok=True)
+            _local_server = pgserver.get_server(data_dir, cleanup_mode=None)
+        return _local_server.get_uri()
 
 
 def _resolve_connection_kwargs() -> dict[str, Any]:
     """Build psycopg2 connection parameters, minting a token if needed."""
+    local_dir = settings.get_local_postgres_dir()
+    if local_dir:
+        return {"dsn": _local_postgres_dsn(local_dir)}
     config = settings.get_lakebase_config()
     if not config["host"]:
         raise LakebaseUnavailable(
@@ -144,13 +145,13 @@ def _resolve_connection_kwargs() -> dict[str, Any]:
     user = config["user"]
 
     if not password:
-        instance = settings.get_lakebase_instance_name()
-        if not instance:
+        endpoint = settings.get_lakebase_endpoint()
+        if not endpoint:
             raise LakebaseUnavailable(
-                "LAKEBASE_INSTANCE_NAME is not set, so no credential can be minted. "
-                "The bundle should set it to the attached instance's name."
+                "LAKEBASE_ENDPOINT is not set, so no credential can be minted. "
+                "The bundle sets it from the attached project."
             )
-        password = _mint_token(instance)
+        password = _mint_token(endpoint)
         # The Postgres role is the identity that minted the token — the app's
         # service principal in a deployment, you in local dev. PGUSER is
         # normally injected and correct, so this only fills a gap.
@@ -221,7 +222,7 @@ def _connect(kwargs: dict[str, Any]) -> Any:
     if inline:
         connect_kwargs["options"] = f"-c search_path={schema}"
 
-    conn = psycopg2.connect(**connect_kwargs)
+    conn = psycopg2.connect(connect_kwargs.pop("dsn", None), **connect_kwargs)
 
     global _schema_ready
     with _schema_lock:
@@ -361,6 +362,20 @@ def _safe_rollback(conn: Any) -> None:
 
 # --- Schema ------------------------------------------------------------------
 
+#: One row per app context an admin has changed in Settings
+#: (services/agent_settings.py). `prompt` NULL keeps the agent's default;
+#: `tools` holds {"builtin": [...] | null, "genie": [...] | null}, where null
+#: keeps the default (the agent's patterns, or the bundle's GENIE_BINDINGS).
+AGENT_CONTEXT_SETTINGS_DDL = """
+CREATE TABLE IF NOT EXISTS agent_context_settings (
+    context_id TEXT PRIMARY KEY,
+    prompt TEXT,
+    tools JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_by TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)
+"""
+
 
 def init_db() -> None:
     """Create this app's tables. Idempotent, and safe to run in every worker.
@@ -382,11 +397,11 @@ def init_db() -> None:
         with conn.cursor() as cur:
             cur.execute("SELECT pg_advisory_lock(%s)", (_INIT_LOCK_KEY,))
             try:
-                # Create this app's tables here with `CREATE TABLE IF NOT EXISTS`.
                 # Add new columns in their own statement, as
                 # `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, rather than editing
                 # a CREATE — that only runs on a database that has never seen the
                 # table.
+                cur.execute(AGENT_CONTEXT_SETTINGS_DDL)
                 conn.commit()
             finally:
                 # Released explicitly rather than left to disconnect, so a

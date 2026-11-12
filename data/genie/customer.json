@@ -1,5 +1,6 @@
 {
   "title": "Customer Intelligence data",
+  "binding": "customer-intelligence:ci_data",
   "description": "The top-10 accounts' revenue, plan and forecast, pipeline, contracts, device footprint, market and account signals, and briefing insights: the contract views behind Customer Intelligence (data/contract.md). In dev workspaces every row is synthetic.",
   "tables": [
     "v_customers",

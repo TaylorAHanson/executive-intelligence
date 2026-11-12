@@ -85,7 +85,7 @@ tail -f backend.log frontend.log
 | `server/routes/agent.py`, `server/services/agent.py` | The tray's backend: chat, approval resume, calls to the agent app. |
 | `src/components/AgentTray.tsx` | The tray: one conversation per context, approval cards. |
 | `src/components/AccountMenu.tsx` | The menu under the user's initials: who is signed in, Settings (admins only), release notes, version. |
-| `src/pages/SettingsPage.tsx`, `server/routes/settings.py` | Each section's assistant instructions, built-in tools, and Genie spaces, for members of `ADMIN_GROUP`. Stored in `agent_context_settings` and sent to the agent on every turn (`server/services/agent_settings.py`). |
+| `src/pages/SettingsPage.tsx`, `server/routes/settings.py` | Each section's assistant instructions, built-in tools, and Genie spaces, for members of `ADMIN_GROUP`. Overrides are stored in the app's Postgres table `agent_context_settings`, defaults come from `GENIE_BINDINGS`, and the result goes to the agent on every turn (`server/services/agent_settings.py`). |
 | `RELEASE_NOTES.md` | User-facing release notes, shown under the account menu. Its header has the conventions. |
 | `src/sections.ts` | The dashboard registry: routes, nav, landing tiles, and each dashboard's agent context. |
 | `src/components/dashboard/` | The dashboard toolkit: page shell, KPI, chart, table, filters, widget states. |
@@ -142,18 +142,25 @@ than an outage, because nobody goes looking for it.
 All three are enforced by `tests/test_sql.py` and explained, with their
 reasoning, in `AGENTS.md`.
 
-## Adding a database
+## The app database
 
-Lakebase (managed Postgres) is wired up but switched off, because deploying an
-instance is billable and a hello-world app shouldn't quietly start costing
-money. To turn it on, copy the three marked blocks from `app-template`'s
-`databricks.yml` into `../databricks.yml` — the `database_instances` resource,
-the app's `postgres` resource, and the two `LAKEBASE_*` environment entries —
-then redeploy.
+The app keeps its own state (the Settings overrides today) in Postgres. Business
+data does not go here: it stays in Unity Catalog, read as the signed-in user.
 
-The backend needs no changes: it detects the injected `PGHOST` and stays dormant
-until it appears. `app-template`'s `server/routes/example_notes.py` is a working
-read/write example, and `/api/health` reports pool statistics.
+- **Deployed**, it is a Lakebase Autoscaling project the bundle creates
+  (`postgres_projects.app_db` in `../databricks.yml`), 0.5 to 1 CU and
+  suspended after five idle minutes, so an unused app costs storage only. The
+  first request after a suspend waits a few seconds for the compute to wake.
+  The app's `postgres` resource injects `PGHOST` and the rest, and
+  `LAKEBASE_ENDPOINT` names the endpoint to mint credentials for.
+- **Locally**, `dev.sh` sets `LOCAL_POSTGRES_DIR=.pgdata` unless `PGHOST` is
+  set, and the backend starts a bundled Postgres there (`pixeltable-pgserver`,
+  from `requirements-dev.txt`). Delete `.pgdata` to start over.
+- Without either, the backend stays dormant: Settings return 503, and the tray
+  uses `GENIE_BINDINGS`.
+
+Tables are created by `init_db` in `server/database.py` at startup.
+`/api/health` reports pool statistics.
 
 The parts that are hard to get right are already handled, and the reasoning is
 written down in `server/database.py` and `server/db_pool.py`:
@@ -165,10 +172,8 @@ written down in `server/database.py` and `server/db_pool.py`:
 - A **dead pooled connection is retried once**, so the first request after a
   database restart succeeds instead of returning a 500. A failed *commit* is
   deliberately not retried.
-- Tables go in a **dedicated schema**, not `public`, which the app's role
-  doesn't own.
-- There are **two different credential APIs** — Autoscaling projects over REST,
-  Provisioned instances via the SDK — and the code tries both.
+- Tables go in a **dedicated schema** (`APP_DB_SCHEMA`, default `exec_intel`),
+  not `public`, which the app's role doesn't own.
 
 ## Adding a dashboard
 

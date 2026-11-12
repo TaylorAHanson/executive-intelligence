@@ -1,5 +1,6 @@
 {
   "title": "Executive Insights data",
+  "binding": "executive:exec_data",
   "description": "Customers, shipments, recognized revenue, and design wins: the contract views behind the Executive Insights dashboard (data/contract.md).",
   "tables": ["v_customers", "v_shipments", "v_revenue_monthly", "v_design_wins"],
   "instructions": [

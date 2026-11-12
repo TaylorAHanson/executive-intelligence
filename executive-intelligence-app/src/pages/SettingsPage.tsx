@@ -18,7 +18,8 @@ const TOOL_NAME_RE = /^[a-z][a-z0-9_]{0,23}$/
 const SPACE_ID_RE = /^[0-9a-f]{32}$/
 
 const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x))
-const isCustomized = (c: ContextAgentSettings) => c.prompt !== null || c.builtin_tools !== null || c.genie_spaces.length > 0
+const isCustomized = (c: ContextAgentSettings) => c.prompt !== null || c.builtin_tools !== null || c.genie_spaces !== null
+const spaceKey = (spaces: GenieSpaceSetting[]) => JSON.stringify(spaces.map(({ name, space_id, description }) => [name, space_id, description]))
 const message = (error: unknown) => (error instanceof Error ? error.message : 'Something went wrong.')
 
 /** Admins edit each app context's agent prompt and tools. Saved to Unity Catalog as the signed-in admin. */
@@ -95,14 +96,15 @@ function ContextEditor({ context, settings }: { context: ContextAgentSettings; s
   const queryClient = useQueryClient()
   const [prompt, setPrompt] = useState(context.prompt ?? context.default_prompt)
   const [builtin, setBuiltin] = useState(context.builtin_tools ?? context.default_builtin_tools)
-  const [spaces, setSpaces] = useState<GenieSpaceSetting[]>(context.genie_spaces)
+  const [spaces, setSpaces] = useState<GenieSpaceSetting[]>(context.genie_spaces ?? context.default_genie_spaces)
 
   const promptIsDefault = prompt.trim() === context.default_prompt.trim()
   const builtinIsDefault = sameSet(builtin, context.default_builtin_tools)
+  const spacesAreDefault = spaceKey(spaces) === spaceKey(context.default_genie_spaces)
   const dirty =
     prompt.trim() !== (context.prompt ?? context.default_prompt).trim() ||
     !sameSet(builtin, context.builtin_tools ?? context.default_builtin_tools) ||
-    JSON.stringify(spaces) !== JSON.stringify(context.genie_spaces)
+    spaceKey(spaces) !== spaceKey(context.genie_spaces ?? context.default_genie_spaces)
 
   const done = () => queryClient.invalidateQueries({ queryKey: SETTINGS_KEY })
   const save = useMutation({
@@ -110,7 +112,7 @@ function ContextEditor({ context, settings }: { context: ContextAgentSettings; s
       saveAgentSettings(context.id, {
         prompt: promptIsDefault ? null : prompt.trim(),
         builtin_tools: builtinIsDefault ? null : builtin,
-        genie_spaces: spaces.map(({ name, space_id, description }) => ({ name, space_id, description })),
+        genie_spaces: spacesAreDefault ? null : spaces.map(({ name, space_id, description }) => ({ name, space_id, description })),
       }),
     onSuccess: done,
   })
@@ -179,7 +181,17 @@ function ContextEditor({ context, settings }: { context: ContextAgentSettings; s
         <p className="mt-3 text-xs text-ink-muted">Memory tools (remember, recall, forget) are always on.</p>
       </Card>
 
-      <Card title="Data tools (Genie spaces)">
+      <Card
+        title="Data tools (Genie spaces)"
+        badge={spacesAreDefault ? 'Default' : 'Customized'}
+        action={
+          !spacesAreDefault && (
+            <button type="button" className="text-xs font-medium text-brand hover:underline" onClick={() => setSpaces(context.default_genie_spaces)}>
+              Restore default
+            </button>
+          )
+        }
+      >
         {spaces.length === 0 ? (
           <p className="text-sm text-ink-light">No data tools. The assistant can't quote figures in this context.</p>
         ) : (
@@ -222,7 +234,7 @@ function ContextEditor({ context, settings }: { context: ContextAgentSettings; s
           type="button"
           disabled={!isCustomized(context) || reset.isPending}
           onClick={() => {
-            if (window.confirm(`Return ${context.label} to the assistant's defaults? Its data tools will be removed.`)) reset.mutate()
+            if (window.confirm(`Return ${context.label} to its default instructions and tools?`)) reset.mutate()
           }}
           className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-ink-light hover:bg-white disabled:opacity-40"
         >

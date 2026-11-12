@@ -418,13 +418,21 @@ fi
 
 # Check an import rather than a marker file, so a venv created before a
 # dependency was added to requirements.txt still gets it installed.
-if ! "$VENV_PYTHON" -c "import fastapi, uvicorn, databricks.sdk" 2>/dev/null; then
+if ! "$VENV_PYTHON" -c "import fastapi, uvicorn, databricks.sdk, psycopg2, pixeltable_pgserver" 2>/dev/null; then
     echo -e "${CYAN}Installing Python dependencies (first run takes a minute)...${NC}"
     "$VENV_PYTHON" -m pip install --upgrade pip >/dev/null 2>&1
-    "$VENV_PYTHON" -m pip install -r requirements.txt || { echo -e "${RED}✗ pip install failed${NC}"; exit 1; }
+    "$VENV_PYTHON" -m pip install -r requirements.txt -r requirements-dev.txt || { echo -e "${RED}✗ pip install failed${NC}"; exit 1; }
     echo -e "${GREEN}✓ Python dependencies installed${NC}"
 else
     echo -e "${GREEN}✓ Python dependencies present${NC}"
+fi
+
+# The deployed app keeps Settings in its Lakebase. Locally the backend starts a
+# bundled Postgres in .pgdata instead (server/database.py), unless .env points
+# PGHOST somewhere else. Delete .pgdata to start over.
+if [ -z "${PGHOST:-}" ]; then
+    export LOCAL_POSTGRES_DIR="$PWD/.pgdata"
+    echo -e "${GREEN}✓ App database: local Postgres in .pgdata${NC}"
 fi
 
 # --- Backend -----------------------------------------------------------------
