@@ -68,8 +68,8 @@ The Session Store keeps one conversation's state, keyed by the top-level `sessio
 keeps facts the agent recalls across conversations, keyed by `actor`: `runtime/adapter.py` reads
 `input.actor` and passes it to `memory_tools(actor)`. If you leave out `actor`, it defaults to the
 `session_id`, so long-term memory won't carry across sessions. For memory that persists, pass a stable
-`actor`, such as the end user's ID, from trusted application context. With a request-user
-(`auth = "user"`) tool bound, the adapter also namespaces a supplied `actor` to the signed-in user; see
+`actor`, such as the end user's ID, from trusted application context. With request-user auth
+(`[auth.user]` in `agent.toml`), the adapter also namespaces a supplied `actor` to the signed-in user; see
 [Request-user authorization](#request-user-authorization).
 
 Memory is off by default under `agentbricks dev`, so try it against the deployed app: two
@@ -161,12 +161,16 @@ Use `agentbricks init --framework langgraph --disable-chat-app` for API-only out
 - Change `runtime/adapter.py` only to map a different application input/output contract.
 - Add local tools under `agent/tools/`; modules are auto-discovered.
 - Add MCP servers in `agent/mcps.py` or with `agentbricks tools add mcp`.
-- Each dashboard context's data tools are a Genie space bound in `agent.toml`: `exec_data` for
-  `executive` and `ci_data` for `customer-intelligence` (tools `<name>_ask`, `<name>_poll`,
-  `<name>_query_result`). Space ids are per workspace: `../data/genie.py --space <executive|customer>`
-  creates a space, then `agentbricks tools add genie-agent <space_id> --name <name> --auth user`
-  binds it. Genie runs as the signed-in user, whose token the client app forwards; that token must
-  carry the `genie` scope (the client's `user_api_scopes`) or the request arrives with no user.
+- Each context's prompt, built-in tools, and Genie spaces can be overridden per turn by
+  `input.settings`, which the client app reads from its `agent_context_settings` table (edited on its
+  Settings page) and merges over the defaults in `agent/contexts.py`. `GET /api/contexts` returns
+  those defaults. A Genie space named `<name>` becomes the tools `<name>_ask`, `<name>_poll`, and
+  `<name>_query_result`; the usual bindings are `exec_data` for `executive` and `ci_data` for
+  `customer-intelligence` (`../data/genie.py --space <executive|customer> --bind <context>:<name>`).
+  No space is bound in `agent.toml`. Settings come from the caller, which is safe because Genie runs
+  as the signed-in user, whose token the client app forwards: a caller can only reach data they
+  could query anyway. `[auth.user]` in `agent.toml` keeps the `genie` scope in the client's
+  `user_api_scopes`; without it the request arrives with no user.
 - Traces go to Unity Catalog tables rather than the experiment's artifact store, because Databricks
   Apps in some workspaces cannot reach the artifact store's regional storage proxy.
   `scripts/trace_storage.py` links the experiment in `agent.toml` `[tracing]`; MLflow links only an

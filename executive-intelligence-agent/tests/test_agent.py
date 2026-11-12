@@ -196,7 +196,7 @@ async def test_adapter_calls_same_run_agent_for_invoke_and_recovery(monkeypatch)
     assert calls[0][1]["actor"] == "runtime-session"
     assert calls[1][0] is None
     assert calls[1][1] == {**calls[0][1], "graph": graph}
-    create_graph.assert_awaited_once_with("runtime-session", None, context=None)
+    create_graph.assert_awaited_once_with("runtime-session", None, context=None, settings=None)
     assert "session_id" not in response
     assert "session_id" not in recovered
 

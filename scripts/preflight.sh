@@ -133,20 +133,31 @@ else
 fi
 
 # --- Agent tools and traces --------------------------------------------------------
-# Genie space ids bound in agent.toml are workspace-specific.
+# Genie spaces are bound per context in the agent_context_settings table (README step 7).
 AGENT_TOML="$ROOT/executive-intelligence-agent/agent.toml"
-GENIE_SPACES="$(python3 -c 'import sys, tomllib
-for t in tomllib.load(open(sys.argv[1], "rb")).get("tools", []):
-    if t.get("source", {}).get("kind") == "genie_agent":
-        print(t["id"], t["source"]["space_id"])' "$AGENT_TOML")"
-while read -r TOOL_ID SPACE_ID; do
-    [ -n "$SPACE_ID" ] || continue
-    if SPACE="$(dbx genie get-space "$SPACE_ID")"; then
-        report PASS "Genie space ($TOOL_ID)" "$(echo "$SPACE" | field title) ($SPACE_ID)"
-    else
-        report FAIL "Genie space ($TOOL_ID)" "$SPACE_ID not in this workspace; run data/genie.py and rebind (README step 7)"
-    fi
-done <<< "$GENIE_SPACES"
+SETTINGS_TABLE="$CATALOG.$SCHEMA.agent_context_settings"
+if ! dbx tables get "$SETTINGS_TABLE" >/dev/null; then
+    report FAIL "Agent settings" "$SETTINGS_TABLE missing; data/load.py --steps views creates it"
+elif [ -z "$WAREHOUSE" ]; then
+    report WARN "Agent settings" "no warehouse to read $SETTINGS_TABLE with; Genie bindings not checked"
+else
+    GENIE_SPACES="$(dbx api post /api/2.0/sql/statements --json "$(python3 -c 'import json, sys
+print(json.dumps({"warehouse_id": sys.argv[1], "wait_timeout": "30s",
+                  "statement": f"SELECT context_id, tools FROM {sys.argv[2]}"}))' "$WAREHOUSE" "$SETTINGS_TABLE")" \
+        | python3 -c 'import json, sys
+for context, tools in json.load(sys.stdin).get("result", {}).get("data_array") or []:
+    for space in json.loads(tools or "{}").get("genie") or []:
+        print(context, space.get("name"), space.get("space_id"))')"
+    [ -n "$GENIE_SPACES" ] || report WARN "Genie bindings" "none in $SETTINGS_TABLE; the tray has no data tools (README step 7)"
+    while read -r CONTEXT_ID TOOL_ID SPACE_ID; do
+        [ -n "$SPACE_ID" ] || continue
+        if SPACE="$(dbx genie get-space "$SPACE_ID")"; then
+            report PASS "Genie space ($CONTEXT_ID: $TOOL_ID)" "$(echo "$SPACE" | field title) ($SPACE_ID)"
+        else
+            report FAIL "Genie space ($CONTEXT_ID: $TOOL_ID)" "$SPACE_ID not in this workspace; run data/genie.py --bind or fix it in Settings"
+        fi
+    done <<< "$GENIE_SPACES"
+fi
 
 EXPERIMENT="$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["tracing"]["experiment_name"])' "$AGENT_TOML")"
 TRACE_TABLES="$(dbx experiments get-by-name "$EXPERIMENT" | python3 -c 'import json, sys

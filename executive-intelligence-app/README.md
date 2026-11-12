@@ -84,6 +84,9 @@ tail -f backend.log frontend.log
 | `server/middleware/auth.py` | On-behalf-of auth for data and for agent calls, with the service principal as a deliberate exception. |
 | `server/routes/agent.py`, `server/services/agent.py` | The tray's backend: chat, approval resume, calls to the agent app. |
 | `src/components/AgentTray.tsx` | The tray: one conversation per context, approval cards. |
+| `src/components/AccountMenu.tsx` | The menu under the user's initials: who is signed in, Settings (admins only), release notes, version. |
+| `src/pages/SettingsPage.tsx`, `server/routes/settings.py` | Each section's assistant instructions, built-in tools, and Genie spaces, for members of `ADMIN_GROUP`. Stored in `agent_context_settings` and sent to the agent on every turn (`server/services/agent_settings.py`). |
+| `RELEASE_NOTES.md` | User-facing release notes, shown under the account menu. Its header has the conventions. |
 | `src/sections.ts` | The dashboard registry: routes, nav, landing tiles, and each dashboard's agent context. |
 | `src/components/dashboard/` | The dashboard toolkit: page shell, KPI, chart, table, filters, widget states. |
 | `src/components/story/` | The briefing toolkit behind Customer Intelligence: chapters, so-whats, recommendations. |

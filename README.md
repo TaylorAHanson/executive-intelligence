@@ -64,12 +64,14 @@ workspace setup, in this order:
    `data/load.py ... --steps insights,grants --grant-to <group>`. Check the records first with
    `data/insights.py ... --dry-run`; the templates were written against the synthetic data.
 7. **Genie spaces.** `data/genie.py -p <profile> --catalog <catalog> --schema <schema> --warehouse <id> --space <space>`
-   creates a space the agent queries, from `data/genie/<space>.json`. Create both: `executive`
-   (bound as `exec_data`) and `customer` (bound as `ci_data`). Bind each id in place of the one in
-   `agent.toml`: from `executive-intelligence-agent/`, run `agentbricks tools remove <name>` if the
-   binding exists, then `agentbricks tools add genie-agent <space_id> --name <name> --auth user`.
+   creates a space the agent queries, from `data/genie/<space>.json`. Create both, and bind each
+   to its section's assistant: `--space executive --bind executive:exec_data` and
+   `--space customer --bind customer-intelligence:ci_data`. Binding writes the section's row in the
+   `agent_context_settings` table, which admins edit later under the account menu > Settings.
    Add `--grant-to <group>` to give the users' group CAN_RUN on the space; Genie answers as each
-   user.
+   user. Then give the admin group write access to that table:
+   `data/load.py ... --steps admins --admin-group <group>`, and deploy with
+   `--var admin_group=<group>`.
 8. **Trace storage.** From `executive-intelligence-agent/`, run
    `uv run python scripts/trace_storage.py -p <profile> --catalog <catalog> --warehouse <id>`
    before the first deploy, so traces go to Unity Catalog tables. MLflow links only an experiment
@@ -100,3 +102,4 @@ workspace setup, in this order:
 | `app_name` | `exec-intel-app` (`exec-intel-app-prod` in prod) | A name unique in the workspace. |
 | `environment` | `dev` / `prod` by target | Shown in `/api/health` and the header badge. |
 | `synthetic_data` | `"true"` | `"false"` only once every contract view reads real tables. Shows the "Synthetic data" badge. |
+| `admin_group` | `admins` | The workspace group whose members see Settings. They also need `MODIFY` on `agent_context_settings` (step 7). |

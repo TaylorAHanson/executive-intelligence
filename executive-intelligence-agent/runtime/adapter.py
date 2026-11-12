@@ -90,10 +90,11 @@ async def _invoke_agent(
     model = payload.get("model")
     model = model if isinstance(model, str) else None
     context_id = _context(payload)
+    settings = payload.get("settings")
     outputs = []
     if agent_input is None:
         graph = await agent_module.create_agent_graph(
-            actor, model, context=context_id, **run_kwargs
+            actor, model, context=context_id, settings=settings, **run_kwargs
         )
         outputs = [
             {"type": "message", "message": item}
@@ -110,6 +111,7 @@ async def _invoke_agent(
             actor=actor,
             model=model,
             context=context_id,
+            settings=settings,
             invocation_id=context.invocation_id,
             **run_kwargs,
         )

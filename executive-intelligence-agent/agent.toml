@@ -13,11 +13,10 @@ name = "exec-intel-agent-sessions"
 
 [tracing]
 experiment_name = "/Shared/agentbricks_traces/executive-intelligence-agent-uc"
-[[tools]]
-id = "exec_data"
-auth = "user"
-source = {kind = "genie_agent", space_id = "01f1de078f2016edb763e4eaeb6a3acc"}
-[[tools]]
-id = "ci_data"
-auth = "user"
-source = {kind = "genie_agent", space_id = "01f1de12ab881e8c979ea033bd36c8ca"}
+
+# Genie spaces are not bound here: admins attach them to contexts in the client's Settings
+# page, and the agent builds their tools per turn as the signed-in user (agent/contexts.py).
+# Every request must carry the user, and the app needs the genie scope for those tools.
+[auth.user]
+required = true
+additional_api_scopes = ["genie"]

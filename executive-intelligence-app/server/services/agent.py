@@ -45,24 +45,36 @@ def session_key(user_email: str, client_session_id: str) -> str:
     return str(uuid.uuid5(_SESSION_NAMESPACE, f"{user_email}\n{client_session_id}"))
 
 
-def invocation_body(*, session: str, actor: str, context: str, message: str) -> dict:
+def _input(actor: str, context: str, settings: Optional[dict]) -> dict:
+    # `settings` is the context's admin settings (services/agent_settings.py);
+    # omitted, the agent uses its defaults for the context.
+    body = {"actor": actor, "context": context}
+    if settings:
+        body["settings"] = settings
+    return body
+
+
+def invocation_body(
+    *, session: str, actor: str, context: str, message: str, settings: Optional[dict] = None
+) -> dict:
     return {
         "id": str(uuid.uuid4()),
         "session_id": session,
-        "input": {
-            "messages": [{"role": "user", "content": message}],
-            "actor": actor,
-            "context": context,
-        },
+        "input": {"messages": [{"role": "user", "content": message}], **_input(actor, context, settings)},
     }
 
 
-def resume_body(*, session: str, actor: str, context: str, decisions: list[dict]) -> dict:
-    """Answer a paused approval. Same session and actor, new invocation id."""
+def resume_body(
+    *, session: str, actor: str, context: str, decisions: list[dict], settings: Optional[dict] = None
+) -> dict:
+    """Answer a paused approval. Same session and actor, new invocation id.
+
+    The agent rebuilds its tools on resume, so it needs the context's settings again.
+    """
     return {
         "id": str(uuid.uuid4()),
         "session_id": session,
-        "input": {"resume": {"decisions": decisions}, "actor": actor, "context": context},
+        "input": {"resume": {"decisions": decisions}, **_input(actor, context, settings)},
     }
 
 

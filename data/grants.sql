@@ -19,3 +19,5 @@ GRANT SELECT ON VIEW `${catalog}`.`${schema}`.v_contracts TO `${group}`;
 GRANT SELECT ON VIEW `${catalog}`.`${schema}`.v_device_footprint TO `${group}`;
 GRANT SELECT ON VIEW `${catalog}`.`${schema}`.v_customer_signals TO `${group}`;
 GRANT SELECT ON VIEW `${catalog}`.`${schema}`.v_insights TO `${group}`;
+-- The tray reads the current context's agent settings as the user.
+GRANT SELECT ON TABLE `${catalog}`.`${schema}`.agent_context_settings TO `${group}`;

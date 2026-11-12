@@ -96,6 +96,12 @@ if $PREFLIGHT && $DEPLOY_APP; then
         || { echo "Preflight failed; fix the FAIL lines above, or rerun with --skip-preflight." >&2; exit 1; }
 fi
 
+# The account menu shows the top release as the app's version.
+if $DEPLOY_APP && ! python3 "$APP_DIR/tests/test_release_notes.py" >/dev/null; then
+    echo "RELEASE_NOTES.md and package.json disagree; run: python3 executive-intelligence-app/tests/test_release_notes.py" >&2
+    exit 1
+fi
+
 if $DEPLOY_AGENT; then
     step "Deploying agent $AGENT_APP (Agent Bricks CLI)"
     # --no-wait plus `deployments wait` instead of a foreground deploy, so the

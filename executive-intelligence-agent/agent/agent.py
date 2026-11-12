@@ -8,10 +8,17 @@ from databricks_langchain import ChatDatabricks
 from langchain.agents import create_agent
 from langchain.agents.middleware import HumanInTheLoopMiddleware
 from langchain.agents.middleware.human_in_the_loop import HITLResponse
+from langchain_core.tools import BaseTool, tool
 from langgraph.types import Command
 from pydantic import TypeAdapter, ValidationError
 
-from agent.contexts import resolve_context, select_tools, system_prompt
+from agent.contexts import (
+    ContextSettings,
+    parse_settings,
+    resolve_context,
+    select_tools,
+    system_prompt,
+)
 from agent.mcps import build_mcp_servers
 
 # Importing the tools package auto-registers every tool module.
@@ -32,6 +39,7 @@ from databricks_agentkit.langgraph.session_store import (
     invocation_metadata,
 )
 from databricks_agentkit.runtime.auth import AuthError
+from databricks_agentkit.runtime.genie import GenieAgent
 from databricks_agentkit.runtime.tool_manifest import resolve_model_service
 
 # A Unity Catalog AI Gateway model service, served from the `system.ai` schema and queried through
@@ -104,11 +112,32 @@ def _check_databricks_auth() -> None:
         ) from e
 
 
+def settings_genie_tools(
+    context_settings: ContextSettings,
+    workspace_client_for: Callable[[str], WorkspaceClient] | None,
+) -> list[BaseTool]:
+    """Ask, poll and query-result tools for each Genie space in a context's settings, as the user."""
+    if context_settings.genie_spaces and workspace_client_for is None and os.getenv("DATABRICKS_APP_NAME"):
+        # Deployed, the only credentials left would be the app's own; never query data with them.
+        raise AuthError(
+            "MCP_USER_AUTHORIZATION_MISSING", "Genie spaces in settings need the request user."
+        )
+    tools: list[BaseTool] = []
+    for space in context_settings.genie_spaces:
+        genie = GenieAgent(space.space_id, auth="user", workspace_client_for=workspace_client_for)
+        tools.extend(
+            tool(f"{space.name}_{method.__name__}")(method)
+            for method in (genie.ask, genie.poll, genie.query_result)
+        )
+    return tools
+
+
 async def create_agent_graph(
     actor: str,
     model: str | None = None,
     *,
     context: str | None = None,
+    settings: Any = None,
     workspace_client_for: Callable[[str], WorkspaceClient] | None = None,
 ):
     """Build the LangGraph agent: local tools + long-term-memory tools + any MCP tools.
@@ -118,17 +147,23 @@ async def create_agent_graph(
 
     ``model`` selects the gateway model for this run; the chat UI passes the picker's choice and
     everything else falls back to ``MODEL``. ``context`` is the client app section (see
-    ``agent/contexts.py``); it picks the prompt section and which tools are offered. The agent is
-    rebuilt per turn, so model, context, and tools can all vary request to request within one
-    session.
+    ``agent/contexts.py``); it picks the prompt section and which tools are offered, and
+    ``settings`` is that context's admin settings from the client (``parse_settings``). The agent
+    is rebuilt per turn, so model, context, settings, and tools can all vary request to request
+    within one session.
     """
     app_context = resolve_context(context)
+    context_settings = parse_settings(settings)
     mcp = await mcp_tools(build_mcp_servers(), workspace_client_for=workspace_client_for)
+    local = all_tools()
     tools = [
         *select_tools(
             app_context,
-            [*all_tools(), *genie_tools(workspace_client_for=workspace_client_for), *mcp],
+            [*local, *genie_tools(workspace_client_for=workspace_client_for), *mcp],
+            context_settings,
+            local_names=[t.name for t in local],
         ),
+        *settings_genie_tools(context_settings, workspace_client_for),
         *memory_tools(actor),
     ]
     middleware = (
@@ -142,7 +177,7 @@ async def create_agent_graph(
             endpoint=endpoint, workspace_client=_app_workspace_client(), use_ai_gateway=True
         ),
         tools=tools,
-        system_prompt=system_prompt(app_context),
+        system_prompt=system_prompt(app_context, context_settings),
         middleware=middleware,
         checkpointer=checkpointer(),
     )
@@ -204,6 +239,7 @@ async def run_agent(
     actor: str | None = None,
     model: str | None = None,
     context: str | None = None,
+    settings: Any = None,
     invocation_id: str | None = None,
     workspace_client_for: Callable[[str], WorkspaceClient] | None = None,
     graph: Any = None,
@@ -218,7 +254,11 @@ async def run_agent(
     actor = actor or session_id
     if graph is None:
         graph = await create_agent_graph(
-            actor, model, context=context, workspace_client_for=workspace_client_for
+            actor,
+            model,
+            context=context,
+            settings=settings,
+            workspace_client_for=workspace_client_for,
         )
     config = thread_config(session_id, actor)
     if invocation_id:

@@ -70,6 +70,12 @@ variables:
       every page "Synthetic data". Set "false" only once the views read a
       workspace's real tables (data/contract.md).
     default: "true"
+  admin_group:
+    description: >-
+      Workspace group whose members see Settings and edit each context's agent
+      prompt and tools. Give it MODIFY on the settings table with
+      data/load.py --admin-group <group>. Use a dedicated group in prod.
+    default: "admins"
 
 resources:
   apps:
@@ -125,6 +131,8 @@ resources:
             value: ${var.data_schema}
           - name: SYNTHETIC_DATA
             value: ${var.synthetic_data}
+          - name: ADMIN_GROUP
+            value: ${var.admin_group}
 
       # ON-BEHALF-OF USER AUTHORIZATION
       # -------------------------------

@@ -38,6 +38,43 @@ export interface CurrentUser {
   on_behalf_of: boolean
   /** True on a laptop, where the app acts as your CLI login. */
   local_dev: boolean
+  /** In the admin group: shows Settings. The backend checks again on every settings call. */
+  is_admin: boolean
+}
+
+export interface GenieSpaceSetting {
+  /** Tools are `<name>_ask`, `<name>_poll` and `<name>_query_result`. */
+  name: string
+  space_id: string
+  /** From Genie when saved. */
+  title?: string
+  description: string
+}
+
+export interface ContextAgentSettings {
+  id: string
+  label: string
+  default_prompt: string
+  default_builtin_tools: string[]
+  /** null: the default prompt applies. */
+  prompt: string | null
+  /** null: the default built-in tools apply. */
+  builtin_tools: string[] | null
+  genie_spaces: GenieSpaceSetting[]
+  updated_by: string | null
+  updated_at: string | null
+}
+
+export interface AgentSettings {
+  base_prompt: string
+  builtin_tools: { name: string; description: string }[]
+  contexts: ContextAgentSettings[]
+}
+
+export interface ContextAgentSettingsUpdate {
+  prompt: string | null
+  builtin_tools: string[] | null
+  genie_spaces: Omit<GenieSpaceSetting, 'title'>[]
 }
 
 export type AgentMessage =
@@ -163,6 +200,22 @@ export const sendAgentMessage = (sessionId: string, context: string, message: st
     method: 'POST',
     body: JSON.stringify({ session_id: sessionId, context, message }),
   })
+
+export const getAgentSettings = () => request<AgentSettings>('/settings/agent')
+
+export const saveAgentSettings = (contextId: string, update: ContextAgentSettingsUpdate) =>
+  request<{ status: string }>(`/settings/agent/${encodeURIComponent(contextId)}`, {
+    method: 'PUT',
+    body: JSON.stringify(update),
+  })
+
+export const resetAgentSettings = (contextId: string) =>
+  request<{ status: string }>(`/settings/agent/${encodeURIComponent(contextId)}`, { method: 'DELETE' })
+
+export const lookupGenieSpace = (spaceId: string) =>
+  request<{ space_id: string; title: string; description: string }>(
+    `/settings/genie-spaces/${encodeURIComponent(spaceId)}`,
+  )
 
 /** Answer a paused approval: one decision per pending action, in order. */
 export const resumeAgent = (sessionId: string, context: string, decisions: ApprovalDecision[]) =>

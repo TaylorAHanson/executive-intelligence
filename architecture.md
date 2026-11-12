@@ -47,7 +47,7 @@ unless noted otherwise.
 | App contexts | Implemented: `general`, `executive`, `customer-intelligence`, `market-intelligence`, `signals`. Per-context tool filtering verified 2026-11-10. On a dashboard the route sets the context; on the landing page the tray has a section selector. `market-intelligence` and `signals` have no pages yet. |
 | Model | `system.ai.claude-sonnet-5-5` through the AI Gateway. Verified. |
 | Local tools | `get_current_time` works. `send_message` is a stub: it returns a confirmation string and sends nothing. |
-| Data tools | Two Genie spaces, created by `data/genie.py`, bound with `auth = "user"`, so queries run as the signed-in user. "Executive Insights data" over the first four contract views, bound as `exec_data` (tools `exec_data_ask`, `exec_data_poll`, `exec_data_query_result`) and offered only in the `executive` context; verified from the deployed tray 2026-11-11: "Which customers are at risk, and why?" answered with figures from the space. "Customer Intelligence data" over the Customer Intelligence views, bound as `ci_data` and offered only in the `customer-intelligence` context. No MCP servers, UC functions, or Vector Search indexes are bound; the `market_*`, `mi_*`, and `signal_*` patterns match no tools, so nothing retrieves the market-intelligence documents themselves. |
+| Data tools | Two Genie spaces, created by `data/genie.py` and bound to their contexts in the `agent_context_settings` table (`--bind`, or the Settings page), so admins can change them without a deploy. Queries run as the signed-in user. "Executive Insights data" over the first four contract views, bound as `exec_data` (tools `exec_data_ask`, `exec_data_poll`, `exec_data_query_result`) to the `executive` context; verified from the deployed tray 2026-11-11: "Which customers are at risk, and why?" answered with figures from the space. "Customer Intelligence data" over the Customer Intelligence views, bound as `ci_data` to the `customer-intelligence` context; verified through a settings binding from the local tray 2026-11-12, not yet deployed. No MCP servers, UC functions, or Vector Search indexes are bound; the `market_*`, `mi_*`, and `signal_*` patterns match no tools, so nothing retrieves the market-intelligence documents themselves. |
 | Approval gate | Implemented on `send_message`, which only the `general` and `market-intelligence` contexts offer. Interrupt and reject verified against a local agent 2026-11-10; interrupt and approve verified against the deployed agent through the client backend's `/api/agent/chat` and `/api/agent/resume` 2026-11-11. |
 | Session Store | Provisioned (`exec-intel-agent-sessions`). Working since the preview was enabled on 2026-11-11. |
 | Memory Store | Provisioned (`exec-intel-agent-memory`). Remember and recall across conversations verified from the deployed tray 2026-11-11. |
@@ -148,7 +148,7 @@ flowchart LR
     subgraph Tools["Bound tools"]
         T3[Local tools<br/>get_current_time, send_message]
         T1[MCP servers<br/>none bound]
-        T2[Genie spaces<br/>exec_data, ci_data]
+        T2[Genie spaces from settings<br/>exec_data, ci_data]
     end
 
     T4[Memory tools<br/>always on, unfiltered]
@@ -165,6 +165,17 @@ A context is an `AppContext` in `executive-intelligence-agent/agent/contexts.py`
 | `prompt` | Instructions appended to `BASE_PROMPT` |
 | `tools` | fnmatch patterns over tool names; `("*",)` offers every tool |
 
+These are defaults. An admin can override any context's prompt, its built-in tools, and its Genie
+spaces on the client's Settings page (account menu > Settings, shown to members of `ADMIN_GROUP`).
+Overrides live in `<catalog>.<schema>.agent_context_settings`, one row per context, read and written
+as the signed-in user: everyone has `SELECT`, the admin group `MODIFY` (`data/admin_grants.sql`). The
+client reads the row on each turn and sends it as `input.settings`; the agent builds that turn's
+Genie tools from it and appends a generated "Data tools" paragraph to the prompt. A space named
+`ci_data` becomes `ci_data_ask`, `ci_data_poll`, and `ci_data_query_result`. Taking settings from
+the caller is safe because every data tool runs as the caller: someone who calls the agent directly
+with their own settings reaches nothing they could not query anyway. The Genie rows in the table
+below come from the bindings `data/genie.py --bind` writes.
+
 | Context | Tools offered today |
 | --- | --- |
 | `general` | All bound tools |
@@ -179,8 +190,8 @@ not context. The system prompt is supplied at each model call rather than stored
 so a context change takes effect on the next turn. The tray keeps a separate conversation per
 context.
 
-To add a section: add an `AppContext` in `agent/contexts.py`, bind its tools (`agentbricks tools add
-...` or `agent/mcps.py`), add the id to `src/agentContexts.ts`, and redeploy both apps. The agent
+To add a section: add an `AppContext` in `agent/contexts.py`, add the id to `src/agentContexts.ts`,
+redeploy both apps, and bind its Genie spaces on the Settings page. The agent
 treats an unknown id as `general`, so the client can be deployed first.
 
 Prompt sections can later move from code to the MLflow Prompt Registry
@@ -325,10 +336,11 @@ user to reload.
 | --- | --- |
 | Access to the client | CAN USE on `exec-intel-app`: the `users` group in the dev target; only the deployer in prod until a group is added. |
 | Dashboard data | On-behalf-of: each widget query runs with the signed-in user's forwarded token (`user_api_scopes`: `sql`, `sql.statement-execution`, `sql.warehouses`), so Unity Catalog applies that user's grants. Users need `SELECT` on the contract views, `USE` on their catalog and schema, and CAN USE on the warehouse (`data/grants.sql`). The client never falls back to its service principal for data. |
-| Client to agent authentication | The signed-in user's forwarded token, sent by the client backend as a bearer token (`agent_auth_headers` in `server/middleware/auth.py`). The agent app's proxy authenticates the user and passes the token on to the agent as `x-forwarded-access-token`, but only when it carries the `apps` scope and every scope the agent's `auth = "user"` tools need; otherwise the agent sees no user and answers 401 `MCP_USER_AUTH_REQUIRED`. That is why the client's `user_api_scopes` include `genie`. `deploy.sh` gives everyone with CAN USE on the client CAN USE on the agent app. Locally, the client uses the developer's CLI login. |
+| Client to agent authentication | The signed-in user's forwarded token, sent by the client backend as a bearer token (`agent_auth_headers` in `server/middleware/auth.py`). The agent app's proxy authenticates the user and passes the token on to the agent as `x-forwarded-access-token`, but only when it carries the `apps` scope and every scope the agent declares in `agent.toml` `[auth.user]`; otherwise the agent sees no user and answers 401 `MCP_USER_AUTH_REQUIRED`. That is why the client's `user_api_scopes` include `genie`. `deploy.sh` gives everyone with CAN USE on the client CAN USE on the agent app. Locally, the client uses the developer's CLI login. |
 | User identity at the agent | The client sends the user's email, taken from the Apps proxy header and never from the browser, as `input.actor`. Memory is partitioned by actor. |
 | Conversation isolation | The client derives the agent session id from the user's email and the browser's session id. |
-| Tool permissions | Data tools run as the signed-in user (`auth = "user"` in `agent.toml`), so the tray can reach only what the user could query directly. For `exec_data` and `ci_data` each user needs CAN_RUN on the Genie space (`data/genie.py --grant-to <group>`), CAN_USE on the warehouse, and `SELECT` on the contract views (`data/grants.sql`). The agent's service principal needs no data grants. |
+| Tool permissions | Data tools run as the signed-in user (Genie tools are built with `auth="user"`), so the tray can reach only what the user could query directly, whatever the settings say. For `exec_data` and `ci_data` each user needs CAN_RUN on the Genie space (`data/genie.py --grant-to <group>`), CAN_USE on the warehouse, and `SELECT` on the contract views (`data/grants.sql`). The agent's service principal needs no data grants. |
+| Agent settings | The Settings page and `/api/settings` are open only to members of `ADMIN_GROUP`, read from the user's own group list, and the write runs as that admin, so it also needs `MODIFY` on `agent_context_settings` (`data/admin_grants.sql`). Both have to hold. Settings change the instructions and which Genie spaces are offered, never whose credentials run them, and a failed read gives the agent's defaults rather than failing the turn. |
 | Contexts and access control | A context narrows what the model is offered; it is not an access boundary. Enforcement is the user's Unity Catalog grants. |
 
 Dashboards and the tray now read data with the same identity, so a user sees the same figures

@@ -4,16 +4,19 @@
     python data/load.py -p <profile> --catalog <catalog> --schema <schema> --warehouse <id>
     python data/load.py ... --grant-to <group>       # also grant the group read access
     python data/load.py ... --steps grants --grant-to <group>   # grants only
+    python data/load.py ... --admin-group <group>    # also let the group edit agent settings
 
 Steps run in order and each is idempotent (CREATE OR REPLACE, GRANT):
 
     synthetic   synthetic/*.sql   the synthetic_* tables (dev workspaces only)
-    views       views/*.sql       the v_* contract views (see contract.md)
+    views       views/*.sql       the v_* contract views (see contract.md), and the
+                                  agent settings table if it is missing
     insights    insights.py       Customer Intelligence insight records from templates
     grants      grants.sql        USE + SELECT on the views for --grant-to
+    admins      admin_grants.sql  MODIFY on the agent settings table for --admin-group
 
 In a workspace with real data, skip `synthetic` and replace views/views.sql
-with views over the real tables (keep views/insights.sql). Needs only
+with views over the real tables (keep views/insights.sql and views/agent_settings.sql). Needs only
 `databricks-sdk`; the client app's venv has it:
 
     executive-intelligence-app/server/venv/bin/python data/load.py ...
@@ -29,7 +32,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import StatementState
 
 HERE = Path(__file__).resolve().parent
-STEPS = ("synthetic", "views", "insights", "grants")
+STEPS = ("synthetic", "views", "insights", "grants", "admins")
 CONTRACT_VIEWS = (
     "v_customers",
     "v_shipments",
@@ -84,28 +87,42 @@ def main() -> int:
     parser.add_argument("--schema", required=True)
     parser.add_argument("--warehouse", required=True, help="SQL warehouse id")
     parser.add_argument("--grant-to", help="Group to grant read access (runs the grants step)")
+    parser.add_argument("--admin-group", help="Group that edits agent settings (runs the admins step)")
     parser.add_argument("--steps", default=None, help=f"Comma-separated subset of {','.join(STEPS)}")
     args = parser.parse_args()
 
     for label, value in (("--catalog", args.catalog), ("--schema", args.schema)):
         if not NAME_RE.match(value):
             parser.error(f"{label} must be letters, digits, underscores, and hyphens only.")
-    if args.grant_to and not GROUP_RE.match(args.grant_to):
-        parser.error("--grant-to has characters a group name cannot contain.")
+    for label, value in (("--grant-to", args.grant_to), ("--admin-group", args.admin_group)):
+        if value and not GROUP_RE.match(value):
+            parser.error(f"{label} has characters a group name cannot contain.")
 
-    steps = args.steps.split(",") if args.steps else ["synthetic", "views", "insights"] + (["grants"] if args.grant_to else [])
+    steps = args.steps.split(",") if args.steps else (
+        ["synthetic", "views", "insights"]
+        + (["grants"] if args.grant_to else [])
+        + (["admins"] if args.admin_group else [])
+    )
     unknown = set(steps) - set(STEPS)
     if unknown:
         parser.error(f"Unknown step(s): {', '.join(sorted(unknown))}")
     if "grants" in steps and not args.grant_to:
         parser.error("The grants step needs --grant-to <group>.")
+    if "admins" in steps and not args.admin_group:
+        parser.error("The admins step needs --admin-group <group>.")
 
     client = WorkspaceClient(profile=args.profile)
-    values = {"catalog": args.catalog, "schema": args.schema, "group": args.grant_to or ""}
+    values = {
+        "catalog": args.catalog,
+        "schema": args.schema,
+        "group": args.grant_to or "",
+        "admins": args.admin_group or "",
+    }
     files = {
         "synthetic": sorted((HERE / "synthetic").glob("*.sql")),
         "views": sorted((HERE / "views").glob("*.sql")),
         "grants": [HERE / "grants.sql"],
+        "admins": [HERE / "admin_grants.sql"],
     }
 
     print(f"Target: {args.catalog}.{args.schema} on warehouse {args.warehouse} ({client.config.host})")

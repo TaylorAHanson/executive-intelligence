@@ -172,9 +172,11 @@ A section with sub-pages registers once in `sections.ts`; `App.tsx` mounts it at
 
 Routes are generated in `App.tsx` from `sections.ts`, with `LandingPage` at `/`
 and `NotFoundPage` for everything else. `Layout` sits outside the routes so the
-header and tray don't remount on navigation. A page that is not a dashboard (a
-settings page, say) gets its own `<Route>` in `App.tsx`. Pages live in `pages/`,
-reusable pieces in `components/`.
+header and tray don't remount on navigation. A page that is not a dashboard
+gets its own `<Route>` in `App.tsx` and, if it is about the app rather than the
+data, an item in `components/AccountMenu.tsx` (the menu under the user's
+initials) instead of a header tab; `ReleaseNotesPage` is the example. Pages live
+in `pages/`, reusable pieces in `components/`.
 
 **Use a normal browser router, not a hash router.** Deep links and hard refreshes
 already work, and it is worth knowing why, because the reason lives in a file you

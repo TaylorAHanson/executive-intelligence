@@ -96,6 +96,32 @@ def get_data_object(name: str) -> str:
     return f"`{catalog}`.`{schema}`.`{name}`"
 
 
+#: The agent's per-context settings, next to the contract views. Not a contract
+#: view: the app owns it (data/views/agent_settings.sql).
+AGENT_SETTINGS_TABLE = "agent_context_settings"
+
+
+def get_agent_settings_table() -> str:
+    """The quoted, fully qualified settings table. Raises ValueError like `get_data_object`."""
+    catalog, schema = get_data_catalog(), get_data_schema()
+    if not catalog or not schema:
+        raise ValueError("DATA_CATALOG and DATA_SCHEMA are not set. Set them in databricks.yml (or .env locally).")
+    for label, part in (("DATA_CATALOG", catalog), ("DATA_SCHEMA", schema)):
+        if not _UC_NAME_RE.match(part):
+            raise ValueError(f"{label} must be letters, digits, underscores, and hyphens only.")
+    return f"`{catalog}`.`{schema}`.`{AGENT_SETTINGS_TABLE}`"
+
+
+def get_admin_group() -> str:
+    """Workspace group whose members see Settings and edit the agent (bundle variable admin_group).
+
+    The app's check only hides the page. Unity Catalog enforces the same rule,
+    because the settings table grants MODIFY to this group alone
+    (data/admin_grants.sql) and every write runs as the signed-in user.
+    """
+    return os.environ.get("ADMIN_GROUP", "admins")
+
+
 def is_running_in_databricks_apps() -> bool:
     """True when this process is the deployed app rather than a laptop.
 

@@ -142,9 +142,10 @@ Catalog access still runs under the user's token. That exception has a
 consequence of its own, which is the next rule.
 
 The agent follows the rule too. `agent_auth_headers` sends the signed-in user's
-token to the agent app, and the agent's Genie tools (`auth = "user"` in
-`agent.toml`) run with it, so the tray can reach only what the user could query
-directly. Two things make that work, and both are easy to undo by accident:
+token to the agent app, and the agent's Genie tools (built with `auth="user"`
+from the Genie spaces on the Settings page) run with it, so the tray can reach
+only what the user could query directly. Two things make that work, and both
+are easy to undo by accident:
 
 - The token reaches the agent only if it carries the `apps` scope *and* every
   scope the agent's user-auth tools need (`genie` today). Adding a tool with a
@@ -315,3 +316,9 @@ does are noise; delete them. Follow that pattern.
 When you change how the app behaves, update the AGENTS.md that describes it in
 the same commit. A separate documentation pass never happens, and a rule nobody
 can trust is worse than no rule.
+
+Every user-facing change ships in the same commit as a `RELEASE_NOTES.md` entry
+(conventions in its header) and a matching `package.json` version bump. Users
+read the notes from the account menu, and a dot on their initials says there is
+a release they haven't opened. `tests/test_release_notes.py` and `../deploy.sh`
+fail when the top release and the version disagree.

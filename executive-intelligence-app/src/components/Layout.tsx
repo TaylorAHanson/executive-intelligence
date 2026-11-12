@@ -5,6 +5,7 @@ import { APP_TITLE, ASSISTANT_NAME, LOGO_URL } from '../brand'
 import { SECTIONS } from '../sections'
 import { useAgentTray } from '../providers/agentTray'
 import { useSession } from '../providers/session'
+import AccountMenu from './AccountMenu'
 import AgentTray from './AgentTray'
 
 interface LayoutProps {
@@ -18,7 +19,7 @@ const navClass = ({ isActive }: { isActive: boolean }) =>
   }`
 
 export default function Layout({ children, title }: LayoutProps) {
-  const { user, environment, syntheticData } = useSession()
+  const { environment, syntheticData } = useSession()
   const tray = useAgentTray()
 
   return (
@@ -69,15 +70,7 @@ export default function Layout({ children, title }: LayoutProps) {
           ))}
         </nav>
 
-        <div className="ml-auto flex shrink-0 items-center gap-4 text-sm text-ink-light">
-          {user ? (
-            <span title={user.local_dev ? 'Local development session' : 'Signed in through Databricks Apps'}>
-              {user.email}
-              {user.local_dev && ' (local)'}
-            </span>
-          ) : (
-            <span>Not signed in</span>
-          )}
+        <div className="ml-auto flex shrink-0 items-center gap-3 text-sm">
           {!tray.isOpen && (
             <button
               type="button"
@@ -88,6 +81,7 @@ export default function Layout({ children, title }: LayoutProps) {
               Ask {ASSISTANT_NAME}
             </button>
           )}
+          <AccountMenu />
         </div>
       </header>
 

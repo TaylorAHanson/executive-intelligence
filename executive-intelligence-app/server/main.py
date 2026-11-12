@@ -20,6 +20,7 @@ from config import settings
 from database import init_db
 from middleware.auth import AuthMiddleware
 from routes import agent, health, user
+from routes import settings as app_settings
 from routes.dashboards import customers as customers_dashboard
 from routes.dashboards import executive as executive_dashboard
 
@@ -73,6 +74,7 @@ app.add_middleware(AuthMiddleware)
 app.include_router(health.router, prefix="/api", tags=["health"])
 app.include_router(user.router, prefix="/api/user", tags=["user"])
 app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
+app.include_router(app_settings.router, prefix="/api/settings", tags=["settings"])
 
 # Dashboards: one router per section in src/sections.ts, at /api/dashboards/<section id>.
 app.include_router(executive_dashboard.router, prefix="/api/dashboards/executive", tags=["dashboards"])

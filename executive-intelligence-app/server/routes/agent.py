@@ -8,16 +8,18 @@ carries the user's own token, so the agent's data tools run as that user. See
 
 `context` is the section of the app the user is in. The agent picks its prompt
 and tools from it (`executive-intelligence-agent/agent/contexts.py`), and falls
-back to its default for an id it doesn't know.
+back to its default for an id it doesn't know. Each turn also carries that
+context's admin settings, read here as the user (`services/agent_settings.py`).
 """
 from typing import Literal, Optional
 from uuid import UUID
 
+from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from middleware.auth import CallerIdentity, get_caller, get_user_token
-from services import agent
+from middleware.auth import CallerIdentity, get_caller, get_user_token, get_workspace_client
+from services import agent, agent_settings
 
 router = APIRouter()
 
@@ -51,6 +53,7 @@ def chat(
     request: ChatRequest,
     caller: CallerIdentity = Depends(get_caller),
     user_token: Optional[str] = Depends(get_user_token),
+    client: WorkspaceClient = Depends(get_workspace_client),
 ) -> dict:
     return agent.invoke(
         agent.invocation_body(
@@ -58,6 +61,7 @@ def chat(
             actor=caller.email,
             context=request.context,
             message=request.message,
+            settings=agent_settings.for_context(client, request.context),
         ),
         user_token,
     )
@@ -68,6 +72,7 @@ def resume(
     request: ResumeRequest,
     caller: CallerIdentity = Depends(get_caller),
     user_token: Optional[str] = Depends(get_user_token),
+    client: WorkspaceClient = Depends(get_workspace_client),
 ) -> dict:
     return agent.invoke(
         agent.resume_body(
@@ -75,6 +80,7 @@ def resume(
             actor=caller.email,
             context=request.context,
             decisions=[d.model_dump(exclude_none=True) for d in request.decisions],
+            settings=agent_settings.for_context(client, request.context),
         ),
         user_token,
     )
