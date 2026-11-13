@@ -45,7 +45,15 @@ done
 [ -n "$CATALOG" ] || { echo "No catalog. Pass --catalog <catalog> (the data_catalog bundle variable)." >&2; exit 1; }
 
 export AGENTBRICKS_DISABLE_AGENT_HINT=1
-AGENT_DEPLOYMENT="$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["agent"]["deployment_name"])' "$ROOT/executive-intelligence-agent/agent.toml")"
+# Git Bash on Windows: programs outside Git Bash, such as Python, cannot open a path like
+# /c/Users/me/x. Git Bash converts such paths for them unless MSYS_NO_PATHCONV=1 is set, which some
+# terminals and Docker setups do, so convert explicitly. Where there is no cygpath (macOS, Linux)
+# this returns the path unchanged.
+native_path() {
+    if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s\n' "$1"; fi
+}
+
+AGENT_DEPLOYMENT="$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["agent"]["deployment_name"])' "$(native_path "$ROOT/executive-intelligence-agent/agent.toml")")"
 AGENT_APP="agent-bricks-$AGENT_DEPLOYMENT"
 # The agent's default model (agent/agent.py) is served by this endpoint.
 MODEL_ENDPOINT="databricks-claude-sonnet-5-5"
@@ -168,7 +176,7 @@ else
     report_deployable "Lakebase project" "$LAKEBASE_PROJECT missing; the bundle creates it on deploy"
 fi
 
-EXPERIMENT="$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["tracing"]["experiment_name"])' "$AGENT_TOML")"
+EXPERIMENT="$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["tracing"]["experiment_name"])' "$(native_path "$AGENT_TOML")")"
 TRACE_TABLES="$(dbx experiments get-by-name "$EXPERIMENT" | python3 -c 'import json, sys
 tags = {t["key"]: t["value"] for t in json.load(sys.stdin).get("experiment", {}).get("tags", [])}
 print(tags.get("mlflow.experiment.databricksTraceDestinationPath", ""))' 2>/dev/null)"

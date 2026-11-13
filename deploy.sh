@@ -85,11 +85,19 @@ done
 export AGENTBRICKS_DISABLE_AGENT_HINT=1
 step() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 
+# Git Bash on Windows: programs outside Git Bash, such as Python, cannot open a path like
+# /c/Users/me/x. Git Bash converts such paths for them unless MSYS_NO_PATHCONV=1 is set, which some
+# terminals and Docker setups do, so convert explicitly. Where there is no cygpath (macOS, Linux)
+# this returns the path unchanged.
+native_path() {
+    if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s\n' "$1"; fi
+}
+
 json_field() {
     python3 -c 'import json, sys; print(json.load(sys.stdin)[sys.argv[1]])' "$1"
 }
 
-AGENT_DEPLOYMENT="$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["agent"]["deployment_name"])' "$AGENT_DIR/agent.toml")"
+AGENT_DEPLOYMENT="$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["agent"]["deployment_name"])' "$(native_path "$AGENT_DIR/agent.toml")")"
 AGENT_APP="agent-bricks-$AGENT_DEPLOYMENT"
 
 if $PREFLIGHT && $DEPLOY_APP; then
@@ -105,7 +113,7 @@ if $PREFLIGHT && $DEPLOY_APP; then
 fi
 
 # The account menu shows the top release as the app's version.
-if $DEPLOY_APP && ! python3 "$APP_DIR/tests/test_release_notes.py" >/dev/null; then
+if $DEPLOY_APP && ! python3 "$(native_path "$APP_DIR/tests/test_release_notes.py")" >/dev/null; then
     echo "RELEASE_NOTES.md and package.json disagree; run: python3 executive-intelligence-app/tests/test_release_notes.py" >&2
     exit 1
 fi
