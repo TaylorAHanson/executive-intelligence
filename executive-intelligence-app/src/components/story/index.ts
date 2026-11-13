@@ -6,9 +6,10 @@
  */
 export { CHAPTERS, chapter, type ChapterDef } from './chapters'
 export { default as Figure, FigureSkeleton } from './Figure'
-export { parseEvidence, useBriefing, type Evidence, type InsightRow } from './insights'
+export { briefingSummary, parseEvidence, useBriefing, type Evidence, type InsightRow } from './insights'
 export { default as Recommendation } from './Recommendation'
 export { default as Rich } from './Rich'
 export { default as Sparkline } from './Sparkline'
 export { default as StoryPage, Chapter } from './StoryPage'
+export { default as Waterfall, type WaterfallStep } from './Waterfall'
 export { pct, points, money } from './format'

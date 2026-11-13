@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { formatValue } from '../../components/dashboard'
 import { money } from '../../components/story'
 
@@ -25,6 +26,34 @@ export interface DealRow {
   forecast_category: string
   amount_usd: number
   close_date: string
+}
+
+/** One top-10 account, as /customers/accounts returns it. The `*_total` and `portfolio_*` columns repeat on every row. */
+export interface AccountRow {
+  customer_id: string
+  customer_name: string
+  region: string
+  segment: string
+  revenue_usd: number | null
+  revenue_growth: number | null
+  plan_attainment: number | null
+  device_share: number | null
+  device_share_change: number | null
+  focus: string | null
+  at_risk: boolean
+  reason: string | null
+  reason_source: string | null
+  reason_date: string | null
+  next_renewal: string | null
+  days_to_renewal: number | null
+  renewal_type: string | null
+  renewal_usd: number | null
+  /** Next quarter's plan less commit: positive means commit falls short. */
+  nq_gap_usd: number | null
+  portfolio_revenue_usd: number | null
+  at_risk_revenue_usd: number | null
+  renewing_usd_total: number | null
+  at_risk_renewing_usd: number | null
 }
 
 /** A signal and where it came from. */
@@ -55,14 +84,22 @@ export function SignalItem({ signal, showCustomer = false }: { signal: SignalRow
   )
 }
 
+/** Open deals, largest first. With `showCustomer`, each row names its account and links to it. */
 export function DealList({ deals, showCustomer = false }: { deals: DealRow[]; showCustomer?: boolean }) {
   return (
     <ul className="divide-y divide-line border-y border-line">
       {deals.map((deal) => (
         <li key={deal.opportunity_id} className="flex flex-wrap items-baseline gap-x-4 gap-y-1 py-2.5 text-[0.95rem]">
           <span className="min-w-0 flex-1 text-ink">
-            {showCustomer && <span className="font-medium">{deal.customer_name} </span>}
+            {showCustomer && (
+              <Link to={`/customers/${deal.customer_id}`} className="font-medium hover:underline">
+                {deal.customer_name}{' '}
+              </Link>
+            )}
             <span className={showCustomer ? 'text-ink-light' : 'font-medium'}>{deal.product_line}</span>
+            <span className="ml-2 text-xs tabular-nums text-ink-muted" title="Opportunity id in the CRM">
+              {deal.opportunity_id}
+            </span>
           </span>
           <span className="w-24 text-sm text-ink-muted">{deal.stage}</span>
           <span className="w-20 text-right font-medium tabular-nums text-ink">{money(deal.amount_usd)}</span>

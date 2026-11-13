@@ -1,63 +1,47 @@
+import { useMemo } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { WidgetState, formatValue } from '../../components/dashboard'
-import { ASSISTANT_NAME, BRAND_COLOR } from '../../brand'
-import { Chapter, Figure, FigureSkeleton, Recommendation, StoryPage, money, pct, useBriefing } from '../../components/story'
+import { ASSISTANT_NAME } from '../../brand'
+import { Chapter, Recommendation, StoryPage, money, pct, useBriefing } from '../../components/story'
 import { useDashboardQuery } from '../../hooks/useDashboardQuery'
 import { useAgentTray } from '../../providers/agentTray'
+import CoverageBar, { type CoverageRow } from './CoverageBar'
+import RevenueChart from './RevenueChart'
 import { DealList, SignalItem, type DealRow, type SignalRow } from './shared'
-import { periodText, provenance } from './text'
-
-interface ProfileRow {
-  customer_id: string
-  customer_name: string
-  region: string
-  segment: string
-  revenue_usd: number | null
-  revenue_growth: number | null
-  plan_attainment: number | null
-  device_share: number | null
-  device_share_prior: number | null
-  nq_plan_usd: number | null
-  nq_commit_usd: number | null
-  nq_best_case_usd: number | null
-  quarter: string
-  at_risk: boolean
-}
-
-interface RevenueRow {
-  month: string
-  revenue_usd: number | null
-  plan_usd: number | null
-  commit_usd: number | null
-  best_case_usd: number | null
-}
-
-interface FootprintRow {
-  quarter: string
-  device_models: number
-  device_models_with_us: number
-  device_share: number | null
-}
-
-interface ContractRow {
-  contract_id: string
-  contract_type: string
-  start_date: string
-  end_date: string
-  annual_value_usd: number
-  status: string
-  days_to_end: number
-}
+import { RENEWAL_SOON_DAYS, renewsIn } from './helpers'
+import { useSinceLastVisit, type Snapshot } from './lastVisit'
+import type { ContractRow, FootprintRow, ProfileRow } from './types'
+import Vitals from './Vitals'
+import WhatChanged from './WhatChanged'
+import { accountQuestions, periodText, provenance } from './text'
 
 export default function AccountBriefing() {
   const { customerId = '' } = useParams()
   const tray = useAgentTray()
   const profile = useDashboardQuery<ProfileRow>('/customers/profile', { customer: customerId })
+  const contracts = useDashboardQuery<ContractRow>('/customers/contracts', { customer: customerId })
+  const coverage = useDashboardQuery<CoverageRow>('/customers/coverage', { customer: customerId })
   const briefing = useBriefing(customerId)
   const p = profile.data?.rows[0]
   const name = p?.customer_name ?? 'this account'
+  const about = `About ${name} (${customerId}): `
+
+  const snapshot = useMemo<Snapshot | null>(
+    () =>
+      p
+        ? {
+            quarter: p.quarter,
+            plan: p.nq_plan_usd,
+            commit: p.nq_commit_usd,
+            attainment: p.plan_attainment,
+            deviceShare: p.device_share,
+            atRisk: p.at_risk ? [{ id: p.customer_id, name: p.customer_name }] : [],
+          }
+        : null,
+    [p],
+  )
+  const visit = useSinceLastVisit(customerId, snapshot)
 
   if (profile.isError) {
     return (
@@ -69,6 +53,13 @@ export default function AccountBriefing() {
       </div>
     )
   }
+
+  const next = contracts.data?.rows[0]
+  const summary = () =>
+    briefing.summary(
+      `Customer Intelligence: ${name}`,
+      next ? [`Next contract: ${next.contract_type}, ends in ${renewsIn(next.days_to_end)} (${formatValue(next.end_date, 'date')}).`] : [],
+    )
 
   return (
     <StoryPage
@@ -82,44 +73,29 @@ export default function AccountBriefing() {
       headline={briefing.headline}
       meta={`${periodText()}${p ? ` · Outlook for ${p.quarter}` : ''}`}
       askLabel={`Ask ${ASSISTANT_NAME} about ${name}`}
-      onAsk={() => tray.ask(`About ${name} (${customerId}): `)}
+      onAsk={() => tray.ask(about)}
+      suggestions={accountQuestions(name)}
+      onSuggest={(question) => tray.ask(`${about}${question}`)}
+      summary={summary}
       provenance={provenance(briefing.generatedBy, briefing.generatedAt)}
+      lead={
+        <>
+          <WhatChanged visit={visit} />
+          <Vitals profile={p} contracts={contracts.data?.rows} coverage={coverage.data?.rows[0]} />
+        </>
+      }
     >
       <Chapter id="know" title={`What ${name} is focused on`} soWhat={briefing.soWhat('know')}>
         <Signals customer={customerId} />
       </Chapter>
 
       <Chapter id="measure" title={`How we are doing with ${name}`} soWhat={briefing.soWhat('measure')}>
-        <div className="grid gap-8 sm:grid-cols-3">
-          {!p ? (
-            <>
-              <FigureSkeleton />
-              <FigureSkeleton />
-              <FigureSkeleton />
-            </>
-          ) : (
-            <>
-              <Figure
-                label="Revenue, last 12 months"
-                value={money(p.revenue_usd)}
-                was={`${(p.revenue_growth ?? 0) >= 0 ? 'up' : 'down'} ${pct(Math.abs(p.revenue_growth ?? 0))} on the year before`}
-                tone={(p.revenue_growth ?? 0) >= 0 ? 'up' : 'down'}
-              />
-              <Figure label="Against plan" value={pct(p.plan_attainment)} tone="flat" />
-              <Figure
-                label="Its new devices using our products"
-                value={pct(p.device_share)}
-                was={`was ${pct(p.device_share_prior)} a year ago`}
-                tone={(p.device_share ?? 0) >= (p.device_share_prior ?? 0) ? 'up' : 'down'}
-              />
-            </>
-          )}
-        </div>
         <RevenueChart customer={customerId} />
         <Footprint customer={customerId} />
       </Chapter>
 
       <Chapter id="anticipate" title="What is coming" soWhat={briefing.soWhat('anticipate')}>
+        <CoverageBar customer={customerId} />
         <Contracts customer={customerId} />
         <AccountDeals customer={customerId} quarter={p?.quarter} />
       </Chapter>
@@ -129,7 +105,12 @@ export default function AccountBriefing() {
           {() => (
             <div className="space-y-4">
               {briefing.actions.map((insight, i) => (
-                <Recommendation key={insight.insight_id} insight={insight} number={i + 1} />
+                <Recommendation
+                  key={insight.insight_id}
+                  insight={insight}
+                  number={i + 1}
+                  onAsk={() => tray.ask(`${about}about the recommendation "${insight.title}": why this one, and what could go wrong if we do it?`)}
+                />
               ))}
             </div>
           )}
@@ -148,25 +129,41 @@ function BackLink() {
   )
 }
 
+/** Signals by theme, risks first. Each theme leads with its newest; the rest are one click away. */
 function Signals({ customer }: { customer: string }) {
   const signals = useDashboardQuery<SignalRow>('/customers/signals', { customer })
   return (
     <WidgetState query={signals} skeleton="table" emptyMessage="No market or account signals for this account.">
       {({ rows }) => {
-        const themes = [...new Set(rows.map((s) => s.theme))]
+        const themes = [...new Set(rows.map((s) => s.theme))].sort(
+          (a, b) =>
+            Number(rows.some((s) => s.theme === b && s.direction === 'risk')) -
+            Number(rows.some((s) => s.theme === a && s.direction === 'risk')),
+        )
         return (
           <div className="space-y-5">
             {themes.map((theme) => {
-              const items = rows.filter((s) => s.theme === theme)
-              const risk = items.some((s) => s.direction === 'risk')
+              const [latest, ...earlier] = rows.filter((s) => s.theme === theme)
+              const risk = [latest, ...earlier].some((s) => s.direction === 'risk')
               return (
                 <div key={theme}>
                   <div className={`text-sm font-semibold ${risk ? 'text-accent' : 'text-ink'}`}>{theme}</div>
                   <ul className="divide-y divide-line">
-                    {items.map((signal) => (
-                      <SignalItem key={signal.signal_id} signal={signal} />
-                    ))}
+                    <SignalItem signal={latest} />
                   </ul>
+                  {earlier.length > 0 && (
+                    <details className="group">
+                      <summary className="cursor-pointer list-none text-xs font-medium text-brand hover:text-brand-dark">
+                        <span className="group-open:hidden">Show {earlier.length} earlier</span>
+                        <span className="hidden group-open:inline">Hide earlier</span>
+                      </summary>
+                      <ul className="divide-y divide-line">
+                        {earlier.map((signal) => (
+                          <SignalItem key={signal.signal_id} signal={signal} />
+                        ))}
+                      </ul>
+                    </details>
+                  )}
                 </div>
               )
             })}
@@ -174,68 +171,6 @@ function Signals({ customer }: { customer: string }) {
         )
       }}
     </WidgetState>
-  )
-}
-
-/** Actual revenue against plan, with the forecast carrying the line through next quarter. */
-function RevenueChart({ customer }: { customer: string }) {
-  const revenue = useDashboardQuery<RevenueRow>('/customers/revenue', { customer })
-  return (
-    <div>
-      <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
-        <span className="text-sm font-medium text-ink-light">Revenue by month</span>
-        <span className="flex gap-4 text-xs text-ink-muted">
-          <Key color={BRAND_COLOR} label="Actual" />
-          <Key color={BRAND_COLOR} label="Commit" dashed />
-          <Key color="#9AA1AB" label="Plan" dashed />
-        </span>
-      </div>
-      <WidgetState query={revenue}>
-        {({ rows }) => (
-          <div className="h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-                <CartesianGrid stroke="#EAECEF" vertical={false} />
-                <XAxis
-                  dataKey="month"
-                  tickFormatter={(v) => formatValue(v, 'month').replace(/ \d{2}(\d{2})$/, " '$1")}
-                  tick={{ fontSize: 11, fill: '#666666' }}
-                  axisLine={false}
-                  tickLine={false}
-                  interval="preserveStartEnd"
-                  minTickGap={24}
-                />
-                <YAxis
-                  tickFormatter={(v) => money(v)}
-                  tick={{ fontSize: 11, fill: '#666666' }}
-                  axisLine={false}
-                  tickLine={false}
-                  width={56}
-                />
-                <Tooltip
-                  formatter={(value, key) => [money(value), String(key).replace('_usd', '').replace('_', ' ')]}
-                  labelFormatter={(v) => formatValue(v, 'month')}
-                />
-                <Line dataKey="plan_usd" stroke="#9AA1AB" strokeWidth={1.5} strokeDasharray="4 4" dot={false} isAnimationActive={false} />
-                <Line dataKey="revenue_usd" stroke={BRAND_COLOR} strokeWidth={2.25} dot={false} isAnimationActive={false} />
-                <Line dataKey="commit_usd" stroke={BRAND_COLOR} strokeWidth={2} strokeDasharray="2 4" dot={false} isAnimationActive={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-      </WidgetState>
-    </div>
-  )
-}
-
-function Key({ color, label, dashed = false }: { color: string; label: string; dashed?: boolean }) {
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <svg width="18" height="6" aria-hidden="true">
-        <line x1="0" y1="3" x2="18" y2="3" stroke={color} strokeWidth="2" strokeDasharray={dashed ? '3 3' : undefined} />
-      </svg>
-      {label}
-    </span>
   )
 }
 
@@ -256,7 +191,7 @@ function Footprint({ customer }: { customer: string }) {
               const falling = yearAgo !== null && share < yearAgo - 0.1
               return (
                 <div key={q.quarter} className="flex flex-1 flex-col items-center gap-1.5">
-                  <span className="text-xs tabular-nums text-ink-light">{pct(share)}</span>
+                  <span className={`text-xs tabular-nums ${falling ? 'font-semibold text-accent' : 'text-ink-light'}`}>{pct(share)}</span>
                   <div className="flex h-24 w-full items-end rounded-md bg-canvas">
                     <div
                       className={`w-full rounded-md ${falling ? 'bg-accent/80' : 'bg-brand/80'}`}
@@ -289,7 +224,7 @@ function Contracts({ customer }: { customer: string }) {
         {({ rows }) => (
           <ul className="divide-y divide-line border-y border-line">
             {rows.map((c) => {
-              const soon = c.days_to_end <= 120
+              const soon = c.days_to_end <= RENEWAL_SOON_DAYS
               return (
                 <li key={c.contract_id} className="flex flex-wrap items-baseline gap-x-4 gap-y-1 py-2.5 text-[0.95rem]">
                   <span className="min-w-0 flex-1 font-medium text-ink">{c.contract_type}</span>

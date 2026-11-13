@@ -12,7 +12,7 @@ routing is `react-router-dom`, server state is TanStack Query, charts are
 | `providers/` | `AppProviders` (query client, session, agent tray) and their hooks, `useSession` and `useAgentTray`. |
 | `hooks/` | `useDashboardQuery` (widget data) and `useFilters` (filters in the URL). |
 | `components/dashboard/` | The dashboard toolkit; import from `components/dashboard`. |
-| `components/story/` | The briefing toolkit (chapters, so-whats, recommendations); import from `components/story`. |
+| `components/story/` | The briefing toolkit (chapters, so-whats, recommendations, waterfall); import from `components/story`. |
 | `pages/` | `LandingPage`, `NotFoundPage`, and one page (or folder, like `customers/`) per section. |
 | `brand.ts` | App title and chart colors (recharts cannot read Tailwind classes). |
 
@@ -142,11 +142,12 @@ from `components/story`:
 
 | Component | For |
 | --- | --- |
-| `StoryPage` | The shell: eyebrow, headline, the single "Ask" action, a sticky chapter nav that tracks scrolling, and the provenance footer. |
-| `Chapter` | A chapter, opened by its one-sentence `soWhat`. |
-| `Figure`, `FigureSkeleton` | One number set in type, with its comparison in words and whether that is good or bad news. |
-| `Recommendation` | Because, Which means, So we; the owner; evidence behind a disclosure. |
-| `Sparkline`, `Rich` | A trend without axes; prose with `**bold**` figures. |
+| `StoryPage` | The shell: eyebrow, headline, the Ask, Copy summary, and Print actions with starter questions, a `lead` slot for what needs attention first, a sticky chapter nav that tracks scrolling, and the provenance footer. |
+| `Chapter` | A chapter: its question, then its one-sentence `soWhat`, then the evidence. |
+| `Figure`, `FigureSkeleton` | One number set in type, with its comparison in words and whether that is good news, bad news (`down`), or urgent but not a change (`alert`). |
+| `Recommendation` | Because, Which means, So we; the owner; evidence behind a disclosure; an "Ask why" button when given `onAsk`. |
+| `Waterfall` | A bridge from one total to another through the changes between them (plan to commit to best case). Hand-drawn SVG; says when its scale does not start at zero. |
+| `Sparkline`, `Rich` | A trend without axes, optionally on a shared `domain`; prose with `**bold**` figures (`highlight` marks them with a pen stroke rather than a color). |
 | `useBriefing(scope)` | The insight records for `portfolio` or one account (`/customers/briefing?scope=`), split into headline, so-whats, and actions. |
 
 The rules a briefing keeps:
@@ -157,9 +158,33 @@ The rules a briefing keeps:
   a deploy. The page writes only labels and captions.
 - **Show where the sentences came from.** `StoryPage`'s `provenance` names what
   wrote the records and when; keep it.
+- **The answer comes first.** Each chapter opens with its `soWhat`, above the
+  evidence, and the page opens with what needs attention before the chapters
+  begin (`lead`). A reader who stops after one screen should still know which
+  accounts to worry about.
+- **Color means status, never chapter.** Red, amber, and green appear only for
+  an account at risk, a figure below plan, or a change for the worse or better.
+  The chapters all share the brand color, and insight prose is marked with a
+  pen stroke because text cannot say whether a figure is good news.
 - **No controls.** No filters, toggles, or settings; the period is fixed and
-  said in words. The only action is asking the agent. A detail the reader may
-  want goes behind a `<details>` disclosure or a link to the account page.
+  said in words. The actions are asking the agent, copying the briefing as
+  text, and printing it. A table may sort, because ten rows are too few to
+  need more. A detail the reader may want goes behind a `<details>` disclosure
+  or a link to the account page.
+- **Size to the room, not the window.** The tray takes a third of a desktop
+  screen, so a layout that depends on width (the accounts table) measures its
+  own element with `useElementWidth` and switches to cards when it is narrow.
+  Below 1100px the tray floats over the page and starts closed
+  (`TRAY_OVERLAY_QUERY`).
+- **Say what a figure can and cannot show.** A deal's value is its first-year
+  revenue, so the coverage bar calls itself an upper bound; a waterfall that
+  does not start at zero says so. Sums over the ten accounts come from SQL
+  (the `portfolio_*` and `*_total` columns of `/customers/accounts`).
+- **"Since you last looked" lives in the browser.** `pages/customers/lastVisit.ts`
+  keeps each day's headline figures in `localStorage` (two weeks' worth, per
+  scope) and compares today with the newest earlier day. It is deliberately not
+  server-side while the insight records are overwritten on every refresh; move
+  it to Lakebase, filtered by the caller, when a history exists.
 - **Format money with `money` from `components/story`**, which matches the
   generator's rounding in `data/insights.py`, so a figure in a sentence and the
   same figure in a chart read the same.
@@ -202,6 +227,9 @@ navigation, and it keeps one conversation per context. `AgentTrayProvider` reads
 the route: on a section's path the tray uses the section's `agentContext` and
 shows it as a label instead of the picker, so the agent always knows which
 dashboard a question came from. Elsewhere (the landing page) the user picks.
+
+On a narrow screen (under 1100px, `TRAY_OVERLAY_QUERY`) the tray starts closed and,
+when opened, floats over the page with a scrim instead of sharing it.
 
 Open the tray from anywhere with `useAgentTray()`: `open()` keeps the draft,
 `ask(question)` puts a question in the input, ready to send. Inside a

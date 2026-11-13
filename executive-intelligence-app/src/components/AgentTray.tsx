@@ -20,7 +20,8 @@ import {
 } from '../api'
 import { AGENT_CONTEXTS } from '../agentContexts'
 import { ASSISTANT_NAME } from '../brand'
-import { useAgentTray } from '../providers/agentTray'
+import { useMediaQuery } from '../hooks/useMediaQuery'
+import { TRAY_OVERLAY_QUERY, useAgentTray } from '../providers/agentTray'
 
 // Loaded on the first agent reply rather than with every page.
 const Markdown = lazy(() => import('./Markdown'))
@@ -62,6 +63,7 @@ const newConversation = (): Conversation => ({
  */
 export default function AgentTray() {
   const { context, contextLocked, setContext, close, focusRequest } = useAgentTray()
+  const overlay = useMediaQuery(TRAY_OVERLAY_QUERY)
   const [conversations, setConversations] = useState<Record<string, Conversation>>({})
   const [draft, setDraft] = useState(focusRequest?.draft ?? '')
   const [busy, setBusy] = useState(false)
@@ -169,8 +171,16 @@ export default function AgentTray() {
 
   return (
     <aside
-      className="relative flex h-full shrink-0 flex-col border-l border-line bg-canvas"
-      style={{ width, maxWidth: `max(${MIN_WIDTH}px, calc(100vw - ${MIN_PAGE_WIDTH}px))` }}
+      className={
+        overlay
+          ? 'fixed inset-y-0 right-0 z-40 flex flex-col border-l border-line bg-canvas shadow-supervisor'
+          : 'relative flex h-full shrink-0 flex-col border-l border-line bg-canvas'
+      }
+      style={
+        overlay
+          ? { width: `min(${width}px, calc(100vw - 1.5rem))` }
+          : { width, maxWidth: `max(${MIN_WIDTH}px, calc(100vw - ${MIN_PAGE_WIDTH}px))` }
+      }
       aria-label="Agent"
     >
       <div

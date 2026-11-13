@@ -25,6 +25,12 @@ export interface AgentTrayState {
   setContext: (context: string) => void
 }
 
+/**
+ * Below this width the tray floats over the page instead of sharing it, and starts
+ * closed: beside it, a 420px tray would leave a tablet's page under 400px wide.
+ */
+export const TRAY_OVERLAY_QUERY = '(max-width: 1099px)'
+
 export const AgentTrayContext = createContext<AgentTrayState | null>(null)
 
 /** Open the agent tray from anywhere, or read which context it is in. */

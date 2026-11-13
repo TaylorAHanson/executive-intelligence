@@ -89,7 +89,7 @@ tail -f backend.log frontend.log
 | `RELEASE_NOTES.md` | User-facing release notes, shown under the account menu. Its header has the conventions. |
 | `src/sections.ts` | The dashboard registry: routes, nav, landing tiles, and each dashboard's agent context. |
 | `src/components/dashboard/` | The dashboard toolkit: page shell, KPI, chart, table, filters, widget states. |
-| `src/components/story/` | The briefing toolkit behind Customer Intelligence: chapters, so-whats, recommendations. |
+| `src/components/story/` | The briefing toolkit behind Customer Intelligence: chapters, so-whats, recommendations, waterfall. |
 | `src/providers/`, `src/hooks/` | Session and tray providers; `useDashboardQuery`, URL-backed `useFilters`. |
 | `server/routes/dashboards/`, `server/queries/` | Widget endpoints and their SQL, one module per dashboard. |
 | `server/services/dashboards.py` | Shared widget execution, filters, typed results, and error mapping. |

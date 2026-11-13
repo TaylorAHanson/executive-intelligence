@@ -1,8 +1,10 @@
+import { BRAND_COLOR } from '../../brand'
+
 /**
- * The briefing's four chapters, in reading order. Colors follow the Market
- * Intelligence 360 journey (Know blue, Measure green, Anticipate orange, Act
- * red) and are used for chapter markers only; everything else stays in the
- * brand palette.
+ * The briefing's four chapters, in reading order. Every chapter shares the
+ * brand color on purpose: red, amber, and green are reserved for status (an
+ * account at risk, a figure below plan), so a chapter's color never competes
+ * with what the numbers inside it are saying.
  */
 export interface ChapterDef {
   id: 'know' | 'measure' | 'anticipate' | 'act'
@@ -11,10 +13,10 @@ export interface ChapterDef {
 }
 
 export const CHAPTERS: ChapterDef[] = [
-  { id: 'know', verb: 'Know', color: '#1F7AE0' },
-  { id: 'measure', verb: 'Measure', color: '#12946A' },
-  { id: 'anticipate', verb: 'Anticipate', color: '#E07F0A' },
-  { id: 'act', verb: 'Act', color: '#D52F45' },
+  { id: 'know', verb: 'Know', color: BRAND_COLOR },
+  { id: 'measure', verb: 'Measure', color: BRAND_COLOR },
+  { id: 'anticipate', verb: 'Anticipate', color: BRAND_COLOR },
+  { id: 'act', verb: 'Act', color: BRAND_COLOR },
 ]
 
 export function chapter(id: ChapterDef['id']): ChapterDef {

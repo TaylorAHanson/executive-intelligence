@@ -92,6 +92,12 @@ check("share changes read in words", "down 40 points from a year ago" in by_id["
 check("every account has an action", {"C1-act-1", "C2-act-1"} <= set(by_id))
 check("records carry no empty bodies", all(r["body"] is None or r["body"] for r in records))
 
+print("\nDeals")
+more = {**facts, "deals": facts["deals"] + [{**facts["deals"][0], "opportunity_id": "O2", "amount_usd": 5e6}]}
+growth_action = {r["insight_id"]: r for r in insights.build(more, TODAY)}["portfolio-act-2"]["action"]
+check("two deals for one product read as one", growth_action.count("Mobile platform") == 1 and "2 deals, $17M" in growth_action)
+check("a single deal is named plainly", "Acme Systems Mobile platform ($12M)" in by_id["portfolio-act-2"]["action"])
+
 print("\nFormatting")
 check("money: millions", insights.money(54e6) == "$54M")
 check("money: small millions keep a decimal", insights.money(2.34e6) == "$2.3M")

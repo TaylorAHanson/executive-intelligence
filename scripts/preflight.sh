@@ -158,7 +158,8 @@ if ! dbx postgres list-projects >/dev/null; then
 elif PROJECT="$(dbx postgres get-project "projects/$LAKEBASE_PROJECT")"; then
     report PASS "Lakebase project" "$LAKEBASE_PROJECT, $(echo "$PROJECT" | python3 -c 'import json, sys
 s = json.load(sys.stdin).get("status", {}).get("default_endpoint_settings", {})
-print(f"{s.get(\"autoscaling_limit_min_cu\")}-{s.get(\"autoscaling_limit_max_cu\")} CU, suspends after {s.get(\"suspend_timeout_duration\", \"(never)\")}")')"
+print("%s-%s CU, suspends after %s" % (s.get("autoscaling_limit_min_cu"), s.get("autoscaling_limit_max_cu"),
+                                       s.get("suspend_timeout_duration", "(never)")))')"
 else
     report_deployable "Lakebase project" "$LAKEBASE_PROJECT missing; the bundle creates it on deploy"
 fi

@@ -6,15 +6,18 @@ export default function Sparkline({
   color = BRAND_COLOR,
   width = 112,
   height = 28,
+  domain,
 }: {
   values: number[]
   color?: string
   width?: number
   height?: number
+  /** [min, max] to draw against, so several sparklines share one scale. Default: this line's own range. */
+  domain?: [number, number]
 }) {
   if (values.length < 2) return <span className="inline-block" style={{ width, height }} />
-  const min = Math.min(...values)
-  const max = Math.max(...values)
+  const min = domain ? domain[0] : Math.min(...values)
+  const max = domain ? domain[1] : Math.max(...values)
   const range = max - min || 1
   const points = values
     .map((v, i) => `${(i / (values.length - 1)) * (width - 4) + 2},${height - 3 - ((v - min) / range) * (height - 6)}`)

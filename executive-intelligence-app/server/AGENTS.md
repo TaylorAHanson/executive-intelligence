@@ -268,7 +268,7 @@ the pool working; a climbing `gc_released` means a route is leaking connections.
 # macOS / Linux. On Windows (Git Bash) use server/venv/Scripts/python.exe
 server/venv/bin/python tests/test_sql.py         # 41 passed
 server/venv/bin/python tests/test_dashboards.py  # 40 passed
-server/venv/bin/python tests/test_customers.py   # 42 passed
+server/venv/bin/python tests/test_customers.py   # 61 passed
 server/venv/bin/python tests/test_agent.py       # 15 passed
 server/venv/bin/python tests/test_db_pool.py     # 23 passed
 server/venv/bin/python tests/test_database.py    # 21 passed

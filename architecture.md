@@ -427,14 +427,20 @@ Measure, Anticipate, Understand, Act) whose Understand step became the per-accou
 | --- | --- | --- |
 | Know | What are they focused on? | Themes shared across accounts, from `v_customer_signals`, each with its sources |
 | Measure | How are we doing with them? | Revenue against plan, our share of their new devices, lead-to-win conversion |
-| Anticipate | Where does next quarter land? | Plan, commit, and best case as a bridge; the open deals that decide it; renewals |
+| Anticipate | Where does next quarter land? | Plan, commit, and best case as a waterfall; the gap beside the open deals that could cover it; a renewal ladder for the next 12 months; the largest open deals |
 | Act | What do we do? | Two or three recommendations, each as Because, Which means, So we, with an owner and evidence |
 
 `/customers` is the top-10 briefing and `/customers/<customer_id>` the same four chapters for one
-account. Each chapter opens with a one-sentence "so what", and the page has a single action, "Ask
-<assistant> about this briefing" (or about the account), which opens the tray in the
-`customer-intelligence` context. There are no filters: the
-period is the last twelve complete months and the forecast is the next calendar quarter.
+account. Each chapter opens with a one-sentence "so what", and above the chapters a "needs
+attention first" panel names the accounts with a risk signal, soonest contract end first, with the
+share of top-10 revenue and of renewing contract value they hold. The top-10 table lists those
+accounts first and shows why each is flagged, its gap to plan, and when a contract ends; an account
+page opens with four vitals and charts revenue with its contract ends and risk signals on one time
+axis. The actions are "Ask <assistant> about this briefing" (or about the account, or about one
+recommendation), which opens the tray in the `customer-intelligence` context, Copy summary, and
+Print. There are no filters: the period is the last twelve complete months and the forecast is the
+next calendar quarter. Which accounts changed since the reader last looked is kept in the browser
+(`pages/customers/lastVisit.ts`), because the insight records are overwritten on every refresh.
 
 ```mermaid
 flowchart LR

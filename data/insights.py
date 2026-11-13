@@ -348,11 +348,22 @@ def build(f: dict, today: datetime.date) -> list[dict]:
         )
         position += 1
 
-    focus_deals = sorted((d for i in focus_ids if i not in risk_ids for d in deals[i]), key=lambda d: -d["amount_usd"])[:3]
+    # One entry per account and product line, so two deals for the same product read as one.
+    by_product = defaultdict(list)
+    for i in focus_ids:
+        if i not in risk_ids:
+            for d in deals[i]:
+                by_product[(i, d["product_line"])].append(d)
+    focus_groups = sorted(by_product.values(), key=lambda g: -sum(d["amount_usd"] for d in g))[:3]
+    focus_deals = [d for group in focus_groups for d in group]
     if focus_theme and focus_deals:
         focus_names = [by_id[i]["customer_name"] for i in focus_ids if i not in risk_ids]
         open_total = sum(d["amount_usd"] for i in focus_ids if i not in risk_ids for d in deals[i])
-        deal_text = names([f"{by_id[d['customer_id']]['customer_name']} {d['product_line']} ({money(d['amount_usd'])})" for d in focus_deals])
+        deal_text = names([
+            f"{by_id[g[0]['customer_id']]['customer_name']} {g[0]['product_line']} "
+            f"({f'{len(g)} deals, ' if len(g) > 1 else ''}{money(sum(d['amount_usd'] for d in g))})"
+            for g in focus_groups
+        ])
         theme_signal = next(s for i in focus_ids for s in signals[i] if s["theme"] == focus_theme)
         add(
             "portfolio", "act", position, "",

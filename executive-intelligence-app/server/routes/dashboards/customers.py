@@ -70,6 +70,19 @@ def outlook(client: WorkspaceClient = Depends(get_workspace_client)) -> WidgetRe
     return run_widget(client, *queries.outlook(queries.windows()))
 
 
+@router.get("/renewals", summary="Top-10 contracts ending in the next 12 months")
+def renewals(client: WorkspaceClient = Depends(get_workspace_client)) -> WidgetResult:
+    return run_widget(client, *queries.renewals(queries.windows()))
+
+
+@router.get("/coverage", summary="Next quarter's gap to plan against the open deals that close in it")
+def coverage(
+    customer: str = Depends(optional_customer),
+    client: WorkspaceClient = Depends(get_workspace_client),
+) -> WidgetResult:
+    return run_widget(client, *queries.coverage(queries.windows(), customer))
+
+
 @router.get("/deals", summary="Largest open deals closing next quarter")
 def deals(
     customer: str = Depends(optional_customer),

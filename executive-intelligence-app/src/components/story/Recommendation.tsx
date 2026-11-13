@@ -1,4 +1,4 @@
-import { ArrowRight, BarChart3, ChevronDown, FileSignature, FileText, Target, UserRound } from 'lucide-react'
+import { ArrowRight, BarChart3, ChevronDown, FileSignature, FileText, Sparkles, Target, UserRound } from 'lucide-react'
 import { chapter } from './chapters'
 import { parseEvidence, type InsightRow } from './insights'
 
@@ -10,7 +10,16 @@ const EVIDENCE_ICON = {
 } as const
 
 /** One recommendation as cause, effect, and action, with its owner and the evidence behind it. */
-export default function Recommendation({ insight, number }: { insight: InsightRow; number: number }) {
+export default function Recommendation({
+  insight,
+  number,
+  onAsk,
+}: {
+  insight: InsightRow
+  number: number
+  /** Puts a question about this recommendation in the assistant's input. */
+  onAsk?: () => void
+}) {
   const { color } = chapter('act')
   const evidence = parseEvidence(insight.evidence)
   const steps = [
@@ -20,7 +29,7 @@ export default function Recommendation({ insight, number }: { insight: InsightRo
   ].filter((step) => step.text)
 
   return (
-    <article className="rounded-2xl border border-line bg-white p-6 shadow-[0_1px_2px_rgba(21,21,21,.04)]">
+    <article className="rounded-2xl border border-line bg-white p-6 shadow-[0_1px_2px_rgba(21,21,21,.04)] print:break-inside-avoid">
       <div className="flex items-start gap-3">
         <span
           className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white"
@@ -54,8 +63,18 @@ export default function Recommendation({ insight, number }: { insight: InsightRo
             {insight.owner}
           </span>
         )}
+        {onAsk && (
+          <button
+            type="button"
+            className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-brand/25 px-3 py-1 text-xs font-medium text-brand hover:bg-brand/10 print:hidden"
+            onClick={onAsk}
+          >
+            <Sparkles className="h-3 w-3" aria-hidden="true" />
+            Ask why
+          </button>
+        )}
         {evidence.length > 0 && (
-          <details className="group ml-auto max-w-full text-right">
+          <details className={`group max-w-full text-right ${onAsk ? '' : 'ml-auto'}`}>
             <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-ink-muted hover:text-ink">
               Evidence ({evidence.length})
               <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" aria-hidden="true" />

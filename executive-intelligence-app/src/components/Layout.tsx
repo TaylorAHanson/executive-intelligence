@@ -3,7 +3,8 @@ import { Link, NavLink } from 'react-router-dom'
 import { BarChart3, Home, Sparkles } from 'lucide-react'
 import { APP_TITLE, ASSISTANT_NAME, LOGO_URL } from '../brand'
 import { SECTIONS } from '../sections'
-import { useAgentTray } from '../providers/agentTray'
+import { useMediaQuery } from '../hooks/useMediaQuery'
+import { TRAY_OVERLAY_QUERY, useAgentTray } from '../providers/agentTray'
 import { useSession } from '../providers/session'
 import AccountMenu from './AccountMenu'
 import AgentTray from './AgentTray'
@@ -21,10 +22,12 @@ const navClass = ({ isActive }: { isActive: boolean }) =>
 export default function Layout({ children, title }: LayoutProps) {
   const { environment, syntheticData } = useSession()
   const tray = useAgentTray()
+  const overlay = useMediaQuery(TRAY_OVERLAY_QUERY)
 
   return (
-    <div className="flex h-screen flex-col">
-      <header className="flex h-16 shrink-0 items-center gap-3 border-b border-line bg-white px-6 text-ink">
+    <div className="flex h-screen flex-col print:block print:h-auto">
+      {/* On a narrow screen the section links wrap onto a row of their own rather than squeezing to nothing. */}
+      <header className="flex min-h-16 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-white px-6 py-2 text-ink print:hidden lg:flex-nowrap lg:py-0">
         <Link to="/" className="flex shrink-0 items-center gap-3">
           {LOGO_URL ? (
             <img src={LOGO_URL} alt={APP_TITLE} className="block h-10 w-auto shrink-0" />
@@ -35,7 +38,9 @@ export default function Layout({ children, title }: LayoutProps) {
           )}
           <div className="border-l border-line pl-3">
             <h1 className="text-[1.2rem] font-bold leading-tight tracking-[-0.005em]">{title}</h1>
-            {title !== 'Executive Intelligence' && <p className="text-[0.72rem] text-ink-muted">Executive Intelligence</p>}
+            {title !== 'Executive Intelligence' && (
+              <p className="text-[0.72rem] text-ink-muted max-lg:hidden">Executive Intelligence</p>
+            )}
           </div>
         </Link>
 
@@ -57,7 +62,7 @@ export default function Layout({ children, title }: LayoutProps) {
           </span>
         )}
 
-        <nav className="ml-4 flex min-w-0 items-center gap-1 overflow-x-auto" aria-label="Dashboards">
+        <nav className="flex min-w-0 items-center gap-1 overflow-x-auto max-lg:order-last max-lg:w-full lg:ml-4" aria-label="Dashboards">
           <NavLink to="/" end className={navClass}>
             <Home className="h-4 w-4" aria-hidden="true" />
             Home
@@ -85,10 +90,19 @@ export default function Layout({ children, title }: LayoutProps) {
         </div>
       </header>
 
-      <div className="flex min-h-0 flex-1">
-        <main className="min-w-0 flex-1 overflow-y-auto">{children}</main>
+      <div className="flex min-h-0 flex-1 print:block">
+        <main className="min-w-0 flex-1 overflow-y-auto print:overflow-visible">{children}</main>
+        {/* On a narrow screen the tray floats over the page, so a tap outside it closes it. */}
+        {overlay && tray.isOpen && (
+          <button
+            type="button"
+            aria-label="Close agent"
+            className="fixed inset-0 z-30 bg-ink/30 print:hidden"
+            onClick={tray.close}
+          />
+        )}
         {/* Hidden rather than unmounted, so closing the tray keeps its conversations. */}
-        <div className={tray.isOpen ? 'contents' : 'hidden'}>
+        <div className={tray.isOpen ? 'contents print:hidden' : 'hidden'}>
           <AgentTray />
         </div>
       </div>

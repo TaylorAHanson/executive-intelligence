@@ -2,7 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { useLocation } from 'react-router-dom'
 import { DEFAULT_AGENT_CONTEXT } from '../agentContexts'
 import { sectionForPath } from '../sections'
-import { AgentTrayContext, type AgentTrayState, type TrayFocusRequest } from './agentTray'
+import { AgentTrayContext, TRAY_OVERLAY_QUERY, type AgentTrayState, type TrayFocusRequest } from './agentTray'
 
 /**
  * Tray visibility and context. Must sit inside the router: on a dashboard
@@ -11,7 +11,8 @@ import { AgentTrayContext, type AgentTrayState, type TrayFocusRequest } from './
 export default function AgentTrayProvider({ children }: { children: ReactNode }) {
   const { pathname } = useLocation()
   const section = sectionForPath(pathname)
-  const [isOpen, setIsOpen] = useState(true)
+  // Docked open on a desktop; closed on a tablet, where it would cover the page.
+  const [isOpen, setIsOpen] = useState(() => !window.matchMedia(TRAY_OVERLAY_QUERY).matches)
   const [chosenContext, setChosenContext] = useState(DEFAULT_AGENT_CONTEXT)
   const [focusRequest, setFocusRequest] = useState<TrayFocusRequest | null>(null)
 

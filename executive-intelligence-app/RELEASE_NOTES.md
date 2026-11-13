@@ -25,6 +25,25 @@
 
 # Release Notes
 
+## 0.3.0 — 2026-11-13
+
+### Added
+
+- **Needs attention first.** Customer Intelligence now opens with the accounts at risk, soonest renewal first, and the share of revenue and renewing contracts they hold.
+- **Since you last looked.** The briefing lists what moved since your last visit: newly at-risk accounts, commit, plan and device share.
+- **Portfolio map.** A chart of all ten accounts by revenue against plan and change in device share. Click a bubble to open the account.
+- **Plan-to-commit waterfall, coverage bar and renewal ladder.** See where the quarter lands, whether open deals could cover the gap, and which contracts end in the next year.
+- **Account vitals and annotated revenue chart.** Each account page opens with its next contract end, plan, device share and quarter gap, and marks contract ends and risk signals on the revenue chart.
+- **Copy summary and Print / PDF.** Share a briefing as text, or print it.
+- **Ask why.** Each recommendation has a button that asks the assistant about it. Starter questions sit under each headline.
+
+### Changed
+
+- **Answers first.** Every chapter now opens with its takeaway, above the detail.
+- **Accounts table.** At-risk accounts are listed first, with the reason, the quarter's gap to plan and days to renewal. Click a heading to sort.
+- **Colors mean status.** Red, amber and green are now only used for status, not to tell chapters apart.
+- **Tablets.** The assistant opens over the page instead of beside it, and the accounts become cards when space is tight.
+
 ## 0.2.0 — 2026-11-12
 
 ### Added
