@@ -12,6 +12,11 @@ Steps run in order and each is idempotent (CREATE OR REPLACE, GRANT):
     insights    insights.py       Customer Intelligence insight records from templates
     grants      grants.sql        USE + SELECT on the views for --grant-to
 
+The schema is created only if it does not exist, so --schema can name one you can already create
+tables in without ever having CREATE SCHEMA. The grants step needs more: it grants USE CATALOG and
+USE SCHEMA, which take ownership of (or MANAGE on) the catalog and schema; without that, leave out
+--grant-to and have an owner grant them.
+
 In a workspace with real data, skip `synthetic` and replace views/views.sql
 with views over the real tables (keep views/insights.sql). Needs only
 `databricks-sdk`; the client app's venv has it:
@@ -26,6 +31,7 @@ import time
 from pathlib import Path
 
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound, PermissionDenied
 from databricks.sdk.service.sql import StatementState
 
 HERE = Path(__file__).resolve().parent
@@ -70,6 +76,28 @@ def execute(client: WorkspaceClient, warehouse: str, sql: str) -> None:
         raise RuntimeError(f"{message}\n--- statement ---\n{sql}")
 
 
+def ensure_schema(client: WorkspaceClient, warehouse: str, catalog: str, schema: str) -> None:
+    """Create the schema only if it is missing.
+
+    A schema that already exists is left alone, so this needs no CREATE SCHEMA privilege: where that
+    is never granted, point --schema at one you can create tables in (CREATE TABLE also covers the
+    views). A schema that is missing is created if you are allowed to, and stops with that said if not.
+    """
+    try:
+        client.schemas.get(f"{catalog}.{schema}")
+        return
+    except (NotFound, PermissionDenied):
+        pass  # missing, or not visible to you; creating it settles which
+    try:
+        execute(client, warehouse, f"CREATE SCHEMA IF NOT EXISTS `{catalog}`.`{schema}`")
+    except RuntimeError as e:
+        raise SystemExit(
+            f"{catalog}.{schema} does not exist and could not be created:\n{e}\n\n"
+            "Use a schema that already exists and that you can create tables in: --schema <name> "
+            "(and --var data_schema=<name> when deploying)."
+        )
+
+
 def scalar(client: WorkspaceClient, warehouse: str, sql: str):
     response = client.statement_execution.execute_statement(warehouse_id=warehouse, statement=sql, wait_timeout="50s")
     if response.status.state != StatementState.SUCCEEDED:
@@ -111,7 +139,7 @@ def main() -> int:
     }
 
     print(f"Target: {args.catalog}.{args.schema} on warehouse {args.warehouse} ({client.config.host})")
-    execute(client, args.warehouse, f"CREATE SCHEMA IF NOT EXISTS `{args.catalog}`.`{args.schema}`")
+    ensure_schema(client, args.warehouse, args.catalog, args.schema)
 
     for step in STEPS:
         if step not in steps:

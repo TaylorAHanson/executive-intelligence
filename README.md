@@ -68,6 +68,10 @@ workspace setup, in this order:
    create the contract views over the workspace's real tables, in one catalog and schema. Use
    `data/views/views.sql` as the template, and keep `data/views/insights.sql`, which creates the
    insight records table rather than reading a source. Do not run the synthetic step.
+   Where you may not create schemas, use one that exists and that you can create tables in
+   (CREATE TABLE also covers the views): pass it as `--schema` to `load.py`, `genie.py` and
+   `trace_storage.py`, and as `--var data_schema=<name>` to every deploy. `load.py` creates a schema
+   only if it is missing.
 7. **Grants and insights.** Give the users' group `USE CATALOG`, `USE SCHEMA`, and `SELECT` on the
    views, and write Customer Intelligence's insight records:
    `data/load.py ... --steps insights,grants --grant-to <group>`. Check the records first with

@@ -140,7 +140,7 @@ if dbx catalogs get "$CATALOG" >/dev/null; then
             fi
         done
     else
-        report FAIL "Schema" "$CATALOG.$SCHEMA missing; data/load.py creates it"
+        report FAIL "Schema" "$CATALOG.$SCHEMA missing; data/load.py creates it if you may, else use an existing schema (--schema / data_schema)"
     fi
 else
     report FAIL "Catalog" "$CATALOG missing or not visible to you"
