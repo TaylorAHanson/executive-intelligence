@@ -57,6 +57,13 @@ actor/tenant authentication; a payload field alone does not establish identity. 
 template adapter reads `input.actor` and defaults it to the session ID, so memory carries across
 sessions only when the client sends a stable actor.
 
+This agent does not call `checkpointer()` or `memory_tools()` directly. `agent/stores.py` wraps them
+so the agent fails open when the preview is not enabled: `refresh()` reads each configured store once
+before a turn's graph is built; a store that cannot answer is replaced for that turn by an
+in-process `InMemorySaver` (the session store) or by no tools (the memory store), and the system
+prompt says memory is off. It looks again after a minute. Keep new code on `stores.session_saver()`
+and `stores.memory_tools_for(actor)`, or it will fail closed again.
+
 ### Tracing
 
 Call `configure_tracing()` after loading config, then wrap agent execution, including streams, in

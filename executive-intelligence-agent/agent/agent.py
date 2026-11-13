@@ -19,17 +19,16 @@ from agent.contexts import (
     select_tools,
     system_prompt,
 )
+from agent import stores
 from agent.mcps import build_mcp_servers
 
 # Importing the tools package auto-registers every tool module.
 from agent.tools import all_tools
 from databricks_agentkit import workspace_client, workspace_headers
 from databricks_agentkit.langgraph import (
-    checkpointer,
     configure_tracing,
     genie_tools,
     mcp_tools,
-    memory_tools,
     start_trace,
     thread_config,
 )
@@ -143,7 +142,8 @@ async def create_agent_graph(
     """Build the LangGraph agent: local tools + long-term-memory tools + any MCP tools.
 
     ``actor`` is the identity whose long-term memory the agent reads/writes; it's captured in the
-    memory tools' closures (never exposed to the model).
+    memory tools' closures (never exposed to the model). The memory tools and the managed
+    checkpointer are used only while their stores answer; see ``agent/stores.py``.
 
     ``model`` selects the gateway model for this run; the chat UI passes the picker's choice and
     everything else falls back to ``MODEL``. ``context`` is the client app section (see
@@ -154,6 +154,8 @@ async def create_agent_graph(
     """
     app_context = resolve_context(context)
     context_settings = parse_settings(settings)
+    # The managed stores may be off in this workspace; the agent answers without them (agent/stores.py).
+    store_status = await stores.refresh()
     mcp = await mcp_tools(build_mcp_servers(), workspace_client_for=workspace_client_for)
     local = all_tools()
     tools = [
@@ -164,7 +166,7 @@ async def create_agent_graph(
             local_names=[t.name for t in local],
         ),
         *settings_genie_tools(context_settings, workspace_client_for),
-        *memory_tools(actor),
+        *stores.memory_tools_for(actor),
     ]
     middleware = (
         [HumanInTheLoopMiddleware(interrupt_on=REQUIRE_APPROVAL)] if REQUIRE_APPROVAL else []
@@ -177,9 +179,9 @@ async def create_agent_graph(
             endpoint=endpoint, workspace_client=_app_workspace_client(), use_ai_gateway=True
         ),
         tools=tools,
-        system_prompt=system_prompt(app_context, context_settings),
+        system_prompt=system_prompt(app_context, context_settings, memory=store_status.memory),
         middleware=middleware,
-        checkpointer=checkpointer(),
+        checkpointer=stores.session_saver(),
     )
 
 
@@ -195,7 +197,8 @@ async def recovery_input(
     A checkpoint tagged with this invocation means LangGraph can continue by receiving ``None``.
     Otherwise recovery replays the original application input.
     """
-    checkpoint = await checkpointer().aget_tuple(thread_config(session_id, actor))
+    await stores.refresh()
+    checkpoint = await stores.session_saver().aget_tuple(thread_config(session_id, actor))
     current_invocation_checkpointed = bool(
         checkpoint and invocation_id_from_metadata(checkpoint.metadata) == invocation_id
     )

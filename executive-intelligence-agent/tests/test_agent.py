@@ -121,7 +121,7 @@ async def test_recovery_input_resumes_current_checkpoint(monkeypatch):
         async def aget_tuple(self, config):
             return SimpleNamespace(metadata=invocation_metadata("inv-1"))
 
-    monkeypatch.setattr(agent_module, "checkpointer", lambda: Saver())
+    monkeypatch.setattr(agent_module.stores, "session_saver", lambda: Saver())
     original = {"messages": [{"role": "user", "content": "hi"}]}
     recovered = await agent_module.recovery_input(
         original,
@@ -141,7 +141,7 @@ async def test_recovery_replays_input_without_current_checkpoint(monkeypatch):
         async def aget_tuple(self, config):
             return None
 
-    monkeypatch.setattr(agent_module, "checkpointer", lambda: Saver())
+    monkeypatch.setattr(agent_module.stores, "session_saver", lambda: Saver())
     original = {"messages": [{"role": "user", "content": "hi"}]}
     recovered = await agent_module.recovery_input(
         original,

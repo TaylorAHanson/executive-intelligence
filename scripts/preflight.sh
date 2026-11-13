@@ -85,14 +85,18 @@ else
 fi
 
 # --- Agent previews ------------------------------------------------------------
+# The agent answers without the preview: no long-term memory, and each conversation's state is kept
+# in the process (executive-intelligence-agent/agent/stores.py). So a missing preview is a WARN, not
+# a reason to stop. `agentbricks deploy` also creates the memory and session stores, and whether it
+# can do that without the preview is not verified; see "Moving to another workspace" in README.md.
 if ! command -v agentbricks >/dev/null; then
     report WARN "Agent Memory Sessions preview" "agentbricks CLI not installed; cannot check"
 elif OUT="$(cd "$ROOT/executive-intelligence-agent" && agentbricks -p "$PROFILE" memory stores list 2>&1)"; then
     report PASS "Agent Memory Sessions preview" "memory store API answers"
 elif echo "$OUT" | grep -qi "FEATURE_DISABLED\|not enabled"; then
-    report FAIL "Agent Memory Sessions preview" "disabled: an admin enables it under profile menu > Previews"
+    report WARN "Agent Memory Sessions preview" "disabled: the agent runs without memory, with history kept in process; an admin enables it under profile menu > Previews"
 else
-    report FAIL "Agent Memory Sessions preview" "$(echo "$OUT" | tail -1 | cut -c1-90)"
+    report WARN "Agent Memory Sessions preview" "could not check: $(echo "$OUT" | tail -1 | cut -c1-80)"
 fi
 
 if [ "$(dbx serving-endpoints get "$MODEL_ENDPOINT" | field state.ready)" = "READY" ]; then

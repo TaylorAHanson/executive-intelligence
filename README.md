@@ -44,8 +44,13 @@ executive-intelligence-app/server/venv/bin/python data/load.py \
 Nothing in the code names a workspace, catalog, or table. Moving changes bundle variables and
 workspace setup, in this order:
 
-1. **Previews.** An admin enables **Agent Memory Sessions** (profile menu > Previews). The agent
-   answers every request with `FEATURE_DISABLED` without it.
+1. **Previews.** An admin enables **Agent Memory Sessions** (profile menu > Previews). Without it
+   the agent still answers, but remembers nothing across conversations and keeps each conversation's
+   state in the process, which a restart loses and instances do not share (`agent/stores.py`).
+   `agentbricks deploy` creates the memory and session stores declared in `agent.toml`, and whether
+   it can do that without the preview is not verified: if the deploy fails creating them, enable the
+   preview, or run `agentbricks memory unbind` and `agentbricks sessions unbind` in
+   `executive-intelligence-agent/` for this deploy and bind them again once it is enabled.
 2. **User authorization for apps.** An admin enables it, so the client's `user_api_scopes` take
    effect. Everything that reads data runs as the signed-in user: dashboards with the `sql`
    scopes, and the agent's Genie tools with the user's token, which the client forwards with the

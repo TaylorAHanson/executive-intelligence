@@ -35,6 +35,7 @@ requests. Exit 75 means it is still deploying; run the same command again. Don't
 | --- | --- |
 | App contexts: base prompt, per-section prompt and tool patterns | `agent/contexts.py` |
 | Framework-native agent and `run_agent` | `agent/agent.py` |
+| Whether the session and memory stores work, and what the agent does when they don't | `agent/stores.py` |
 | Local tools | `agent/tools/` |
 | MCP servers | `agent/mcps.py` |
 | Managed runtime `invoke`/`recover` hooks and input/output translation | `runtime/adapter.py` |

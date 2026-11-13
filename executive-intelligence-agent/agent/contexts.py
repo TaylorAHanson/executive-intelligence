@@ -34,6 +34,15 @@ Prefer short answers that lead with the conclusion. Use your memory tools to rec
 preferences and prior findings, and to save durable facts they ask you to remember."""
 
 
+#: Added to the prompt when the long-term memory tools are not offered (agent/stores.py), so the model
+#: does not promise to remember. BASE_PROMPT still names the tools, since they are usually there.
+MEMORY_UNAVAILABLE_PROMPT = (
+    "Long-term memory is not available right now, and you have no memory tools. Do not say you "
+    "will remember anything, or that you recall earlier conversations. If the user asks you to "
+    "remember something, tell them plainly that you cannot keep it beyond this conversation."
+)
+
+
 @dataclass(frozen=True)
 class AppContext:
     id: str
@@ -214,12 +223,16 @@ def _data_tools_section(spaces: Iterable[GenieSpace]) -> str:
     return "\n".join(lines)
 
 
-def system_prompt(context: AppContext, settings: ContextSettings | None = None) -> str:
+def system_prompt(
+    context: AppContext, settings: ContextSettings | None = None, *, memory: bool = True
+) -> str:
+    """The turn's system prompt. `memory` is False when the memory tools are not offered."""
     settings = settings or ContextSettings()
     sections = [
         BASE_PROMPT,
         f"Current app context: {context.label}.\n{settings.prompt or context.prompt}",
         _data_tools_section(settings.genie_spaces),
+        "" if memory else MEMORY_UNAVAILABLE_PROMPT,
     ]
     return "\n\n".join(section for section in sections if section)
 
