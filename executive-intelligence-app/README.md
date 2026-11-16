@@ -85,7 +85,7 @@ tail -f backend.log frontend.log
 | `server/routes/agent.py`, `server/services/agent.py` | The tray's backend: chat, approval resume, calls to the agent app. |
 | `src/components/AgentTray.tsx` | The tray: one conversation per context, approval cards. |
 | `src/components/AccountMenu.tsx` | The menu under the user's initials: who is signed in, Settings (admins only), release notes, version. |
-| `src/pages/SettingsPage.tsx`, `server/routes/settings.py` | Each section's assistant instructions, built-in tools, and Genie spaces, for members of `ADMIN_GROUP`. Overrides are stored in the app's Postgres table `agent_context_settings`, defaults come from `GENIE_BINDINGS`, and the result goes to the agent on every turn (`server/services/agent_settings.py`). |
+| `src/pages/SettingsPage.tsx`, `src/pages/settings/ToolPicker.tsx`, `server/routes/settings.py` | Each section's assistant instructions and tools (built-in tools, Genie spaces, and Unity Catalog MCP services, searched in one list), for members of `ADMIN_GROUP`. Overrides are stored in the app's Postgres table `agent_context_settings`, defaults come from `GENIE_BINDINGS`, and the result goes to the agent on every turn (`server/services/agent_settings.py`). |
 | `RELEASE_NOTES.md` | User-facing release notes, shown under the account menu. Its header has the conventions. |
 | `src/sections.ts` | The dashboard registry: routes, nav, landing tiles, and each dashboard's agent context. |
 | `src/components/dashboard/` | The dashboard toolkit: page shell, KPI, chart, table, filters, widget states. |
@@ -235,12 +235,15 @@ gives everyone with CAN_USE on this app CAN_USE on the agent app, and starts thi
 app. The agent can't be deployed from the bundle: Agent Bricks provisions its
 memory, session and runtime stores, which have no bundle resource type.
 
-The app requests the `sql`, `apps` and `genie` user scopes, so **a workspace
-admin must enable user authorization for apps** before on-behalf-of works; until
-then the token header never arrives and dashboard endpoints return 401. The tray
-calls the agent with the same user token, and the agent's Genie tools run as
-that user. The agent app passes a caller's token on only if it already carries
-the scopes the agent's tools need, which is why this app asks for `genie`. For a new workspace, follow
+The app requests the `sql`, `apps`, `genie`, `ai-gateway` and `unity-catalog`
+user scopes, so **a workspace admin must enable user authorization for apps**
+before on-behalf-of works; until then the token header never arrives and
+dashboard endpoints return 401. The tray calls the agent with the same user
+token, and the agent's Genie tools and MCP services run as that user. The agent
+app passes a caller's token on only if it already carries the scopes the agent's
+tools need, which is why this app asks for `genie` and `ai-gateway`.
+`unity-catalog` lets Settings list the MCP services an admin can attach. Adding a
+scope asks everyone to consent again the next time they open the app. For a new workspace, follow
 "Moving to another workspace" in `../README.md`.
 
 The `dev` target lets everyone in the workspace open the app. Its name is
@@ -266,6 +269,8 @@ npm run build                                                    # type-check
 | Tray says the agent isn't configured (503) | `AGENT_APP_URL` is unset. Set it in `.env`, or deploy with `../deploy.sh`. |
 | Tray says the agent rejected your credentials (502) | `backend.log` (or `databricks apps logs`) prints the token's scopes. Without `apps` or `genie`, the browser's consent predates a scope change: delete the app's site cookie and reload to consent again. With both, the user lacks CAN_USE on the agent app; rerun `../deploy.sh`, which copies this app's users to it. |
 | Tray can't reach the agent locally (502) | The agent isn't running. Start both with `../dev.sh`; if the agent won't start, read `../executive-intelligence-agent/agent.log`. |
+| Settings can't list MCP services (403) | The app lacks the `unity-catalog` user scope (redeploy, then reopen the app to consent), or you lack USE CATALOG and USE SCHEMA on the schema. |
+| Settings says the agent can't list MCP tools yet | The agent predates MCP services; redeploy it with `../deploy.sh`. |
 | 401 from every data endpoint when deployed | User authorization isn't enabled on the app, or the scope is missing from `user_api_scopes`. |
 | `ModuleNotFoundError: No module named 'server'` | Backend imports are flat — `from routes import x`, not `from server.routes import x`. |
 | "Frontend not built" (503) | Run `npm run build`. |

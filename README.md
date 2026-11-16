@@ -53,8 +53,9 @@ workspace setup, in this order:
    `executive-intelligence-agent/` for this deploy and bind them again once it is enabled.
 2. **User authorization for apps.** An admin enables it, so the client's `user_api_scopes` take
    effect. Everything that reads data runs as the signed-in user: dashboards with the `sql`
-   scopes, and the agent's Genie tools with the user's token, which the client forwards with the
-   `apps` and `genie` scopes.
+   scopes, and the agent's Genie tools and MCP services with the user's token, which the client
+   forwards with the `apps`, `genie` and `ai-gateway` scopes. `unity-catalog` lets Settings list
+   the MCP services an admin can attach.
 3. **Lakebase.** The client keeps Settings in a Lakebase Autoscaling project that the bundle
    creates, so the workspace needs Lakebase, and the deployer needs to be allowed to create
    projects.

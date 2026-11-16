@@ -7,10 +7,12 @@ match its patterns. Memory tools are always offered, so what the agent learns ab
 across contexts.
 
 Admins change a context's prompt and tools in the client's Settings page. The client stores them in
-Unity Catalog and sends the current context's settings as ``input.settings`` on each turn; this
-module merges them over the defaults below. Genie spaces come only from settings, because their ids
-differ per workspace. The client is the only intended caller, but anyone with CAN USE on the agent
-app could send their own settings. That gains them nothing: data tools run as the caller.
+its own Postgres and sends the current context's settings as ``input.settings`` on each turn; this
+module merges them over the defaults below. Genie spaces and Unity Catalog MCP services come only
+from settings, because what exists differs per workspace. The client is the only intended caller,
+but anyone with CAN USE on the agent app could send their own settings. That gains them nothing:
+data tools and MCP services run as the caller. Settings name an MCP service, never a URL, so the
+caller's token only ever goes to this workspace's AI Gateway (``agent/mcp_services.py``).
 
 A context narrows what the model is offered; it is not an access-control boundary. Data tools run
 as the signed-in user, so that user's Unity Catalog grants decide what is reachable. Add a context
@@ -93,26 +95,6 @@ CONTEXTS: dict[str, AppContext] = {
             ),
             tools=("get_current_time",),
         ),
-        AppContext(
-            id="market-intelligence",
-            label="Market Intelligence",
-            prompt=(
-                "The user is in Market Intelligence. Focus on competitors, market share, pricing, and "
-                "industry news. Combine structured market data with supporting documents, and cite "
-                "the source of each claim."
-            ),
-            # market_* and mi_* are placeholders for market-intelligence MCP servers.
-            tools=("get_current_time", "send_message", "market_*", "mi_*"),
-        ),
-        AppContext(
-            id="signals",
-            label="Signal Review",
-            prompt=(
-                "The user is reviewing signals the scheduled signal-finding loop surfaced. Explain why "
-                "each signal fired, what evidence supports it, and what would confirm or dismiss it."
-            ),
-            tools=("get_current_time", "signal_*"),
-        ),
     )
 }
 
@@ -124,6 +106,17 @@ GENIE_SPACE_RE = re.compile(r"^[0-9a-f]{32}$")
 MAX_GENIE_SPACES = 10
 MAX_PROMPT_CHARS = 8000
 
+#: A Unity Catalog MCP service, ``catalog.schema.name``. Plain names only, since the name goes into
+#: the AI Gateway URL path (``/ai-gateway/mcp-services/<service>``).
+MCP_SERVICE_RE = re.compile(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$")
+#: What the model API accepts as a tool name. A service tool named otherwise is never offered.
+MCP_TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+MAX_MCP_SERVICES = 10
+MAX_MCP_TOOLS = 100
+#: Services settings cannot attach. The sandbox runs code and needs the downscoping policy that only
+#: an ``agent.toml`` binding carries (``agentbricks tools add sandbox``).
+UNSUPPORTED_MCP_SERVICES = frozenset({"system.ai.sandbox"})
+
 
 @dataclass(frozen=True)
 class GenieSpace:
@@ -134,6 +127,24 @@ class GenieSpace:
 
 
 @dataclass(frozen=True)
+class McpService:
+    """A Unity Catalog AI Gateway MCP service attached to a context, called as the user."""
+
+    service: str
+    #: The service's tools to offer. None offers all of them, including any it adds later.
+    tools: tuple[str, ...] | None = None
+    #: Tools that wait for the user's approval. None asks first for every tool the service does not
+    #: mark read-only, so a tool the service adds later is gated until an admin decides otherwise.
+    approve: tuple[str, ...] | None = None
+
+    def offers(self, tool_name: str) -> bool:
+        return self.tools is None or tool_name in self.tools
+
+    def asks_first(self, tool_name: str, read_only: bool) -> bool:
+        return not read_only if self.approve is None else tool_name in self.approve
+
+
+@dataclass(frozen=True)
 class ContextSettings:
     """A context's admin settings. None means "use the default" for that part."""
 
@@ -141,6 +152,7 @@ class ContextSettings:
     #: Exact names of local tools to offer, replacing the context's patterns for local tools.
     builtin_tools: tuple[str, ...] | None = None
     genie_spaces: tuple[GenieSpace, ...] = ()
+    mcp_services: tuple[McpService, ...] = ()
 
 
 def _text(value: Any, limit: int) -> str:
@@ -189,7 +201,45 @@ def parse_settings(raw: Any) -> ContextSettings:
                 description=_text(entry.get("description"), 500),
             )
         )
-    return ContextSettings(prompt=prompt, builtin_tools=builtin_tools, genie_spaces=tuple(spaces))
+    return ContextSettings(
+        prompt=prompt,
+        builtin_tools=builtin_tools,
+        genie_spaces=tuple(spaces),
+        mcp_services=_parse_mcp_services(tools.get("mcp")),
+    )
+
+
+def _tool_names(value: Any) -> tuple[str, ...] | None:
+    """A list of tool names, or None for "the default". Names the model would reject are dropped."""
+    if not isinstance(value, list):
+        return None
+    names = [n for n in value if isinstance(n, str) and MCP_TOOL_NAME_RE.match(n)]
+    return tuple(dict.fromkeys(names))[:MAX_MCP_TOOLS]
+
+
+def _parse_mcp_services(raw: Any) -> tuple[McpService, ...]:
+    services: list[McpService] = []
+    for entry in raw if isinstance(raw, list) else []:
+        if not isinstance(entry, Mapping):
+            continue
+        service = entry.get("service")
+        if not (isinstance(service, str) and MCP_SERVICE_RE.match(service)):
+            logger.warning("Ignoring an MCP service with an invalid name: %r", service)
+            continue
+        if service in UNSUPPORTED_MCP_SERVICES:
+            logger.warning("Ignoring MCP service %r: it can't be attached through settings.", service)
+            continue
+        if any(s.service == service for s in services) or len(services) >= MAX_MCP_SERVICES:
+            logger.warning("Ignoring MCP service %r: duplicate or too many services.", service)
+            continue
+        services.append(
+            McpService(
+                service=service,
+                tools=_tool_names(entry.get("tools")),
+                approve=_tool_names(entry.get("approve")),
+            )
+        )
+    return tuple(services)
 
 
 def resolve_context(context_id: str | None) -> AppContext:
@@ -223,15 +273,43 @@ def _data_tools_section(spaces: Iterable[GenieSpace]) -> str:
     return "\n".join(lines)
 
 
+def _unavailable_services_section(unavailable: Iterable[tuple[str, bool]]) -> str:
+    unavailable = list(unavailable)
+    if not unavailable:
+        return ""
+    lines = [
+        "These services are set up for this part of the app but you cannot use them for this user "
+        "right now, so you have none of their tools. If a question needs one, say so plainly."
+    ]
+    for service, sign_in in unavailable:
+        reason = (
+            "the user has not connected it yet; they can sign in once under AI Gateway > MCPs in "
+            "Databricks"
+            if sign_in
+            else "it did not answer, or the user lacks access to it"
+        )
+        lines.append(f"- {service}: {reason}.")
+    return "\n".join(lines)
+
+
 def system_prompt(
-    context: AppContext, settings: ContextSettings | None = None, *, memory: bool = True
+    context: AppContext,
+    settings: ContextSettings | None = None,
+    *,
+    memory: bool = True,
+    unavailable_services: Iterable[tuple[str, bool]] = (),
 ) -> str:
-    """The turn's system prompt. `memory` is False when the memory tools are not offered."""
+    """The turn's system prompt.
+
+    `memory` is False when the memory tools are not offered. `unavailable_services` holds
+    (service, needs sign-in) for each MCP service in settings this user could not reach this turn.
+    """
     settings = settings or ContextSettings()
     sections = [
         BASE_PROMPT,
         f"Current app context: {context.label}.\n{settings.prompt or context.prompt}",
         _data_tools_section(settings.genie_spaces),
+        _unavailable_services_section(unavailable_services),
         "" if memory else MEMORY_UNAVAILABLE_PROMPT,
     ]
     return "\n\n".join(section for section in sections if section)

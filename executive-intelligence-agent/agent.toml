@@ -14,9 +14,10 @@ name = "exec-intel-agent-sessions"
 [tracing]
 experiment_name = "/Shared/agentbricks_traces/executive-intelligence-agent-uc"
 
-# Genie spaces are not bound here: admins attach them to contexts in the client's Settings
-# page, and the agent builds their tools per turn as the signed-in user (agent/contexts.py).
-# Every request must carry the user, and the app needs the genie scope for those tools.
+# Genie spaces and Unity Catalog MCP services are not bound here: admins attach them to
+# contexts in the client's Settings page, and the agent builds their tools per turn as the
+# signed-in user (agent/contexts.py, agent/mcp_services.py). Every request must carry the
+# user, and the app needs the genie scope for Genie and ai-gateway for MCP services.
 [auth.user]
 required = true
-additional_api_scopes = ["genie"]
+additional_api_scopes = ["genie", "ai-gateway"]

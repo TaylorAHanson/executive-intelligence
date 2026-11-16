@@ -25,6 +25,20 @@
 
 # Release Notes
 
+## 0.4.0 — 2026-11-13
+
+### Added
+
+- **One searchable tools list.** In **Settings**, each section's **Tools** card shows what the assistant uses. Search built-in tools, Genie spaces and MCP services, then click **Add**.
+- **MCP services.** Give a section services from AI Gateway, such as web search, Slack or GitHub, and choose which of their tools the assistant may use.
+- **Ask first.** MCP tools that aren't marked read-only wait for your approval in the assistant. Admins choose, tool by tool, which ones ask.
+- **Services that use your own account.** Sign in to them once under AI Gateway → MCPs in Databricks. Until you do, the assistant says it can't reach them.
+
+### Changed
+
+- **Adding a Genie space.** Pick it from the list by name instead of pasting its id. Adding by id still works.
+- **Only built sections.** The assistant's section list and Settings no longer offer Market Intelligence or Signal Review. They return when their pages do.
+
 ## 0.3.0 — 2026-11-13
 
 ### Added

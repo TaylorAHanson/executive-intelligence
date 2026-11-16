@@ -50,9 +50,9 @@ check(
     session_key("a@example.com", browser_session) != browser_session,
 )
 
-body = invocation_body(session="s-1", actor="a@example.com", context="market-intelligence", message="hi")
+body = invocation_body(session="s-1", actor="a@example.com", context="executive", message="hi")
 check("a turn carries the actor inside input, where the agent reads it", body["input"]["actor"] == "a@example.com")
-check("a turn carries the app context", body["input"]["context"] == "market-intelligence")
+check("a turn carries the app context", body["input"]["context"] == "executive")
 check("a turn sends the session at the top level", body["session_id"] == "s-1" and "actor" not in body)
 check(
     "each turn gets a fresh invocation id",

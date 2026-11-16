@@ -49,11 +49,9 @@ def test_default_context_offers_every_tool():
 
 
 def test_context_filters_tools_by_name_pattern():
-    names = {t.name for t in select_tools(CONTEXTS["market-intelligence"], TOOLS)}
-    assert names == {"market_share", "get_current_time"}
-    names = {t.name for t in select_tools(CONTEXTS["signals"], TOOLS)}
-    assert names == {"signal_lookup", "get_current_time"}
     names = {t.name for t in select_tools(CONTEXTS["executive"], TOOLS)}
+    assert names == {"get_current_time"}
+    names = {t.name for t in select_tools(CONTEXTS["customer-intelligence"], TOOLS)}
     assert names == {"get_current_time"}
 
 
@@ -123,9 +121,9 @@ def test_settings_builtin_list_replaces_patterns_for_local_tools_only():
     settings = parse_settings({"tools": {"builtin": []}})
     names = {
         t.name
-        for t in select_tools(CONTEXTS["market-intelligence"], TOOLS, settings, local_names=["get_current_time"])
+        for t in select_tools(CONTEXTS["general"], TOOLS, settings, local_names=["get_current_time"])
     }
-    assert names == {"market_share"}
+    assert names == {"market_share", "signal_lookup"}
 
 
 def test_describe_contexts_lists_defaults_for_settings_page():
@@ -148,9 +146,9 @@ def test_client_context_ids_exist_in_the_agent():
 
 
 def test_system_prompt_includes_context_section():
-    prompt = system_prompt(CONTEXTS["market-intelligence"])
+    prompt = system_prompt(CONTEXTS["customer-intelligence"])
     assert "Executive Intelligence agent" in prompt
-    assert "Market Intelligence" in prompt
+    assert "Customer Intelligence" in prompt
 
 
 @pytest.mark.asyncio
@@ -167,9 +165,9 @@ async def test_adapter_passes_context_to_graph_and_run(monkeypatch):
     monkeypatch.setattr(adapter, "run_agent", fake_run_agent)
     context = SimpleNamespace(invocation_id="inv-1", session_id="s-1", emit=AsyncMock())
     settings = {"prompt": "Custom."}
-    payload = {"messages": [{"role": "user", "content": "hi"}], "context": "signals", "settings": settings}
+    payload = {"messages": [{"role": "user", "content": "hi"}], "context": "executive", "settings": settings}
 
     await adapter.invoke(payload, context)
 
-    assert seen["context"] == "signals"
+    assert seen["context"] == "executive"
     assert seen["settings"] == settings

@@ -169,8 +169,18 @@ Use `agentbricks init --framework langgraph --disable-chat-app` for API-only out
   `executive` and `ci_data` for `customer-intelligence` (`../data/genie.py` prints each entry).
   No space is bound in `agent.toml`. Settings come from the caller, which is safe because Genie runs
   as the signed-in user, whose token the client app forwards: a caller can only reach data they
-  could query anyway. `[auth.user]` in `agent.toml` keeps the `genie` scope in the client's
-  `user_api_scopes`; without it the request arrives with no user.
+  could query anyway. `[auth.user]` in `agent.toml` keeps the `genie` and `ai-gateway` scopes in
+  the client's `user_api_scopes`; without them the request arrives with no user.
+- Settings can also attach Unity Catalog MCP services (AI Gateway > MCPs) to a context, as
+  `input.settings.tools.mcp`: `[{"service": "system.ai.slack", "tools": [...] | null, "approve":
+  [...] | null}]`. Settings carry only the service's name; `agent/mcp_services.py` builds the URL on
+  the user's own workspace and connects as the user each turn, so no caller can send a user's token
+  elsewhere. `tools: null` offers every tool; `approve: null` makes every tool the service does not
+  mark read-only wait for approval in the tray. A service the user can't reach (not signed in, no
+  EXECUTE) costs only its own tools for that turn, and the prompt says so. The Settings page lists a
+  service's tools through `GET /api/mcp-services/{service}/tools`, which runs the same code as the
+  user. `system.ai.sandbox` can't be attached this way: it needs the policy `agentbricks tools add
+  sandbox` writes.
 - Traces go to Unity Catalog tables rather than the experiment's artifact store, because Databricks
   Apps in some workspaces cannot reach the artifact store's regional storage proxy.
   `scripts/trace_storage.py` links the experiment in `agent.toml` `[tracing]`; MLflow links only an

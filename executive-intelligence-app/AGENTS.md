@@ -143,13 +143,13 @@ consequence of its own, which is the next rule.
 
 The agent follows the rule too. `agent_auth_headers` sends the signed-in user's
 token to the agent app, and the agent's Genie tools (built with `auth="user"`
-from the Genie spaces on the Settings page) run with it, so the tray can reach
-only what the user could query directly. Two things make that work, and both
-are easy to undo by accident:
+from the Genie spaces on the Settings page) and the MCP services attached there
+run with it, so the tray can reach only what the user could query directly. Two
+things make that work, and both are easy to undo by accident:
 
 - The token reaches the agent only if it carries the `apps` scope *and* every
-  scope the agent's user-auth tools need (`genie` today). Adding a tool with a
-  new scope means adding that scope to `user_api_scopes` here.
+  scope the agent's user-auth tools need (`genie` and `ai-gateway` today). Adding
+  a tool with a new scope means adding that scope to `user_api_scopes` here.
 - Each user needs CAN_USE on the agent app; `../deploy.sh` copies this app's
   CAN_USE grants to it.
 

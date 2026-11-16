@@ -93,6 +93,14 @@ native_path() {
     if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s\n' "$1"; fi
 }
 
+# A --no-wait agent deploy cannot work on Windows. agentbricks starts its background process through
+# the virtualenv's python.exe, a launcher whose pid is not the interpreter's, so the process finds the
+# record its parent wrote for it, does not recognise its own pid, and refuses to run as "already
+# running". Deploy in the foreground there instead: it returns once the agent answers requests, so
+# there is nothing to wait for afterwards. (cygpath exists only in Git Bash, MSYS and Cygwin.)
+FOREGROUND_AGENT=false
+command -v cygpath >/dev/null 2>&1 && FOREGROUND_AGENT=true
+
 json_field() {
     python3 -c 'import json, sys; print(json.load(sys.stdin)[sys.argv[1]])' "$1"
 }
@@ -125,7 +133,11 @@ if $DEPLOY_AGENT; then
     # --allow-user-scope-update: tools bound with auth = "user" need scopes
     # (genie, ...) that an app created earlier may lack; without the flag the
     # deploy stops rather than widen what the app may do as its users.
-    (cd "$AGENT_DIR" && agentbricks -p "$PROFILE" deploy --no-wait --allow-user-scope-update)
+    if $FOREGROUND_AGENT; then
+        (cd "$AGENT_DIR" && agentbricks -p "$PROFILE" deploy --allow-user-scope-update)
+    else
+        (cd "$AGENT_DIR" && agentbricks -p "$PROFILE" deploy --no-wait --allow-user-scope-update)
+    fi
 fi
 
 if $DEPLOY_APP; then
@@ -139,7 +151,7 @@ if $DEPLOY_APP; then
     )
 fi
 
-if $DEPLOY_AGENT; then
+if $DEPLOY_AGENT && ! $FOREGROUND_AGENT; then
     step "Waiting for the agent to answer requests"
     while true; do
         set +e

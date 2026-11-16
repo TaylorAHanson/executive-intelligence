@@ -188,8 +188,9 @@ fi
 
 # --- Apps --------------------------------------------------------------------------
 # The tray forwards the user's token to the agent, and the agent's proxy passes
-# it on only if it already carries the scopes the agent's user-auth tools need.
-REQUIRED_SCOPES="sql apps genie"
+# it on only if it already carries the scopes the agent's user-auth tools need
+# (genie, ai-gateway). unity-catalog lets Settings list MCP services.
+REQUIRED_SCOPES="sql apps genie ai-gateway unity-catalog"
 APP_JSON="$(dbx apps get "$CLIENT_APP")" || APP_JSON=""
 if [ -n "$APP_JSON" ]; then
     SCOPES="$(echo "$APP_JSON" | field effective_user_api_scopes)"

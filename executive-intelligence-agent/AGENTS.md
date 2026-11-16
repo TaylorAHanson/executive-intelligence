@@ -37,9 +37,11 @@ requests. Exit 75 means it is still deploying; run the same command again. Don't
 | Framework-native agent and `run_agent` | `agent/agent.py` |
 | Whether the session and memory stores work, and what the agent does when they don't | `agent/stores.py` |
 | Local tools | `agent/tools/` |
-| MCP servers | `agent/mcps.py` |
+| MCP servers bound in code for every context | `agent/mcps.py` |
+| Unity Catalog MCP services attached per context in the client's Settings: built per turn as the user, cached tool definitions, approval defaults | `agent/mcp_services.py` |
 | Managed runtime `invoke`/`recover` hooks and input/output translation | `runtime/adapter.py` |
 | `DurableAgentServer` construction and hook registration | `runtime/main.py` |
+| Routes the client's Settings page reads (`/api/contexts`, `/api/mcp-services/{service}/tools`) | `runtime/settings_api.py` |
 | Browser and managed-state routes | `runtime/ui.py` |
 | Browser behavior | `ui/app.js` |
 

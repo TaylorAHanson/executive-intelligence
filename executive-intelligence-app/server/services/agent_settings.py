@@ -17,15 +17,25 @@ as the signed-in user.
 Genie titles and descriptions for the bundle's bindings are read from Genie as
 the signed-in user and cached, so the service principal needs no access to any
 space.
+
+Settings can also attach Unity Catalog MCP services (the AI Gateway's MCPs) to
+a context. The picker lists them as the signed-in admin: services from the
+Unity Catalog API (`unity-catalog` scope), and each service's tools from the
+agent (`/api/mcp-services/<service>/tools`), which holds the MCP client and
+lists them with the same code it runs on every turn. Only the service's name
+is stored, never a URL; the agent builds the URL on its own workspace.
 """
 import logging
+import re
 import threading
 import time
 from typing import Any, Optional
+from urllib.parse import quote
 
 import psycopg2
 import requests
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import DatabricksError, NotFound, PermissionDenied, Unauthenticated
 from fastapi import HTTPException
 from psycopg2.extras import Json
 
@@ -45,6 +55,15 @@ _defaults_cache: Optional[tuple[float, dict]] = None
 _space_cache: dict[str, tuple[float, Optional[dict]]] = {}
 
 _DB_ERRORS = (database.LakebaseUnavailable, psycopg2.Error)
+
+#: `catalog.schema.name`, as the agent accepts it (`MCP_SERVICE_RE` in agent/contexts.py).
+MCP_SERVICE_RE = re.compile(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$")
+#: The sandbox runs code and needs a downscoping policy only `agent.toml` can carry.
+UNSUPPORTED_MCP_SERVICES = frozenset({"system.ai.sandbox"})
+_MCP_SERVICES_PATH = "/api/2.1/unity-catalog/mcp-services"
+_MAX_PAGES = 20
+_MAX_GENIE_SPACES = 200
+_SPACE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
 def is_admin(client: WorkspaceClient, email: str) -> bool:
@@ -174,9 +193,10 @@ def for_context(client: WorkspaceClient, context_id: str) -> Optional[dict]:
     genie = tools.get("genie")
     if genie is None:
         genie = default_genie_spaces(client, context_id)
+    mcp = tools.get("mcp")
     if not row and not genie:
         return None
-    return {"prompt": row.get("prompt"), "tools": {"builtin": tools.get("builtin"), "genie": genie}}
+    return {"prompt": row.get("prompt"), "tools": {"builtin": tools.get("builtin"), "genie": genie, "mcp": mcp}}
 
 
 def agent_defaults(user_token: Optional[str]) -> dict:
@@ -213,3 +233,128 @@ def genie_space(client: WorkspaceClient, space_id: str) -> dict:
             detail="No Genie space with that id that you can open. Check the id and your CAN_RUN on it.",
         )
     return {"space_id": space_id, "title": space.title or "", "description": space.description or ""}
+
+
+def list_genie_spaces(client: WorkspaceClient) -> list[dict]:
+    """The Genie spaces the signed-in admin can open, by title, for the tool picker."""
+    spaces: list[dict] = []
+    token = None
+    try:
+        for _ in range(_MAX_PAGES):
+            page = client.genie.list_spaces(page_size=100, page_token=token)
+            for space in page.spaces or []:
+                if space.space_id and _SPACE_ID_RE.match(space.space_id):
+                    spaces.append({
+                        "space_id": space.space_id,
+                        "title": space.title or "",
+                        "description": (space.description or "")[:500],
+                    })
+            token = page.next_page_token
+            if not token or len(spaces) >= _MAX_GENIE_SPACES:
+                break
+    except DatabricksError as e:
+        logger.info("Could not list Genie spaces as the admin: %s", e)
+        raise HTTPException(status_code=502, detail=f"Could not list your Genie spaces: {e}")
+    return sorted(spaces[:_MAX_GENIE_SPACES], key=lambda s: (s["title"].lower(), s["space_id"]))
+
+
+def _mcp_api_error(e: DatabricksError, what: str, missing: str) -> HTTPException:
+    """A Unity Catalog MCP services error, with the fix that usually applies."""
+    if isinstance(e, NotFound):
+        return HTTPException(status_code=404, detail=missing)
+    if isinstance(e, (PermissionDenied, Unauthenticated)):
+        # 403 even for a 401: the tray reads 401 as a lapsed sign-in, and this isn't one.
+        return HTTPException(
+            status_code=403,
+            detail=(
+                f"Can't read {what}: {e}. The app needs the `unity-catalog` user scope "
+                "(databricks.yml), and you need USE CATALOG and USE SCHEMA on the schema "
+                "and EXECUTE on the service."
+            ),
+        )
+    return HTTPException(status_code=502, detail=f"Can't read {what}: {e}")
+
+
+def list_mcp_services(client: WorkspaceClient, schema: str) -> list[dict]:
+    """The MCP services in `schema` the signed-in admin can use, read as the admin."""
+    services: dict[str, dict] = {}
+    token = None
+    seen_tokens: set[str] = set()
+    for _ in range(_MAX_PAGES):
+        query = {"parent": f"schemas/{schema}"}
+        if token:
+            query["page_token"] = token
+        try:
+            page = client.api_client.do("GET", _MCP_SERVICES_PATH, query=query)
+        except DatabricksError as e:
+            raise _mcp_api_error(
+                e, f"the MCP services in {schema}", f"There's no schema {schema} that you can see."
+            )
+        for raw in (page or {}).get("mcp_services") or []:
+            name = str(raw.get("name") or "").removeprefix("mcp-services/")
+            if not MCP_SERVICE_RE.match(name) or name in UNSUPPORTED_MCP_SERVICES:
+                continue
+            services[name] = {
+                "service": name,
+                "comment": str(raw.get("comment") or "")[:1000],
+                # Databricks runs these itself (SQL, Genie, web search); the rest reach a
+                # third party, often with each person's own account.
+                "databricks_managed": "internal" in (raw.get("config") or {}),
+            }
+        token = (page or {}).get("next_page_token")
+        if not token or token in seen_tokens:
+            break
+        seen_tokens.add(token)
+    return [services[name] for name in sorted(services)]
+
+
+def mcp_service(client: WorkspaceClient, service: str) -> dict:
+    """One MCP service, read as the admin: proves it exists and they can see it."""
+    try:
+        client.api_client.do("GET", f"{_MCP_SERVICES_PATH}/{quote(service, safe='')}")
+    except DatabricksError as e:
+        raise _mcp_api_error(
+            e, f"the MCP service {service}", f"There's no MCP service {service} that you can use."
+        )
+    return {"service": service}
+
+
+def mcp_service_tools(user_token: Optional[str], service: str, refresh: bool = False) -> dict:
+    """`service`'s tools as the signed-in admin sees them, listed by the agent.
+
+    The agent lists them because it holds the MCP client and uses the same code
+    on each turn, so the names an admin picks are the names it offers. Answers
+    `{service, tools: [{name, description, read_only, offerable}], problem}`;
+    `problem` says why a service listed nothing, and whether signing in fixes it.
+    """
+    url = settings.get_agent_app_url()
+    if not url:
+        raise HTTPException(status_code=503, detail="No agent configured. Set AGENT_APP_URL.")
+    headers = {} if settings.agent_app_is_local() else agent_auth_headers(user_token)
+    try:
+        response = requests.get(
+            f"{url}/api/mcp-services/{quote(service, safe='')}/tools",
+            params={"refresh": "true"} if refresh else None,
+            headers=headers,
+            timeout=60,
+            allow_redirects=False,
+        )
+    except requests.RequestException as e:
+        logger.error("Could not ask the agent for %s's tools: %s", service, e)
+        raise HTTPException(status_code=502, detail="Could not reach the agent. Is it running?")
+    if response.status_code == 404:
+        raise HTTPException(
+            status_code=502,
+            detail="The agent can't list MCP tools yet. Redeploy it (../deploy.sh) and try again.",
+        )
+    try:
+        response.raise_for_status()
+        body = response.json()
+    except (requests.RequestException, ValueError) as e:
+        logger.error("The agent could not list %s's tools: %s", service, e)
+        raise HTTPException(status_code=502, detail=f"The agent could not list {service}'s tools.")
+    return {
+        "service": service,
+        "tools": body.get("tools") if isinstance(body.get("tools"), list) else [],
+        "problem": body.get("problem"),
+    }

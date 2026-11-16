@@ -5,10 +5,9 @@ from pathlib import Path
 
 import uvicorn
 from agent.agent import configure
-from agent.contexts import describe_contexts
-from agent.tools import all_tools
 from dotenv import load_dotenv
 from runtime.adapter import invoke, recover
+from runtime.settings_api import install_settings_api
 from runtime.ui import install_ui
 
 from databricks_agentkit import DurableAgentServer
@@ -22,12 +21,7 @@ app = DurableAgentServer()
 app.invoke(invoke)
 app.recover(recover)
 install_ui(app)
-
-
-@app.get("/api/contexts", include_in_schema=False)
-def contexts() -> dict:
-    """Each context's default prompt and tools, which the client's Settings page edits over."""
-    return describe_contexts(all_tools())
+install_settings_api(app)
 
 
 def main() -> None:

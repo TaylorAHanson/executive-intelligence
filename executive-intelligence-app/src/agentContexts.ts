@@ -7,7 +7,9 @@
  * section can ship here before the agent is redeployed.
  *
  * A dashboard section sets its context through `agentContext` in `sections.ts`,
- * so the tray follows the route. The landing page lets the user choose.
+ * so the tray follows the route. The landing page lets the user choose. Add a
+ * context here with the page that uses it, so nobody can pick a section that
+ * isn't built.
  */
 export interface AgentContext {
   id: string
@@ -18,8 +20,6 @@ export const AGENT_CONTEXTS: AgentContext[] = [
   { id: 'general', label: 'General' },
   { id: 'executive', label: 'Executive Insights' },
   { id: 'customer-intelligence', label: 'Customer Intelligence' },
-  { id: 'market-intelligence', label: 'Market Intelligence' },
-  { id: 'signals', label: 'Signal Review' },
 ]
 
 export const DEFAULT_AGENT_CONTEXT = AGENT_CONTEXTS[0].id

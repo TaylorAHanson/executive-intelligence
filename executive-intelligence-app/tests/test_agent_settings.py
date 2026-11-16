@@ -8,8 +8,9 @@ Databricks credentials. Run it directly.
 
 What these pin: saved rows override the defaults field by field, the bundle's
 Genie bindings are the defaults and come back on reset, a database outage never
-fails a tray turn, only the admin group passes the admin check, and the routes
-reject what the agent would silently drop.
+fails a tray turn, only the admin group passes the admin check, the routes
+reject what the agent would silently drop, and the tool picker lists Genie
+spaces and MCP services as the admin and asks the agent for a service's tools.
 """
 import os
 import shutil
@@ -35,6 +36,9 @@ from pydantic import ValidationError  # noqa: E402
 
 import database  # noqa: E402
 from config import settings  # noqa: E402
+from databricks.sdk.errors import NotFound, PermissionDenied  # noqa: E402
+
+import routes.settings as settings_routes  # noqa: E402
 from routes.settings import ContextSettingsUpdate  # noqa: E402
 from services import agent_settings  # noqa: E402
 from services.agent import invocation_body, resume_body  # noqa: E402
@@ -86,11 +90,12 @@ try:
     got = agent_settings.for_context(client, "executive")
     check("with no row, the bundle's binding is the context's Genie space",
           got == {"prompt": None, "tools": {"builtin": None, "genie": [
-              {"name": "exec_data", "space_id": SPACE_A, "title": "Space 0123", "description": "About the space."}]}})
+              {"name": "exec_data", "space_id": SPACE_A, "title": "Space 0123", "description": "About the space."}],
+              "mcp": None}})
     agent_settings.for_context(client, "executive")
     check("the space's title is read from Genie once and cached", client.genie.calls == 1)
     check("a context with no row and no binding sends nothing",
-          agent_settings.for_context(client, "signals") is None)
+          agent_settings.for_context(client, "general") is None)
     unreadable = agent_settings.for_context(client_with(), "customer-intelligence")
     check("a space the caller can't open is still offered, without a title",
           unreadable["tools"]["genie"][0]["space_id"] == SPACE_B and unreadable["tools"]["genie"][0]["title"] == "")
@@ -183,6 +188,150 @@ try:
     check("an over-long prompt is rejected", rejected({"prompt": "x" * 8001}))
     check("more than ten spaces is rejected",
           rejected({"genie_spaces": [{"name": f"s{i}", "space_id": SPACE_A} for i in range(11)]}))
+
+    check("an MCP service with chosen tools parses",
+          not rejected({"mcp_services": [{"service": "system.ai.slack", "tools": ["search"], "approve": []}]}))
+    check("an MCP service may leave its tools and approvals at their defaults",
+          ContextSettingsUpdate(mcp_services=[{"service": "system.ai.slack"}]).mcp_services[0].tools is None)
+    for label, service in (("a URL", "https://evil.example.com/mcp"), ("a path", "../../api.x.y"),
+                           ("a two-part name", "system.slack")):
+        check(f"{label} is not an MCP service name", rejected({"mcp_services": [{"service": service}]}))
+    check("a tool name the model would reject is rejected",
+          rejected({"mcp_services": [{"service": "system.ai.slack", "tools": ["send message"]}]}))
+    check("more than ten MCP services is rejected",
+          rejected({"mcp_services": [{"service": f"system.ai.s{i}"} for i in range(11)]}))
+
+    # --- MCP services in a turn ---------------------------------------------------
+
+    mcp = [{"service": "system.ai.web_search", "tools": None, "approve": []}]
+    agent_settings.save("general", None, {"builtin": None, "genie": None, "mcp": mcp}, "admin@x.com")
+    got = agent_settings.for_context(client_with(), "general")
+    check("saved MCP services travel to the agent with the turn", got["tools"]["mcp"] == mcp)
+    agent_settings.reset("general")
+    check("a context without MCP services sends none",
+          agent_settings.for_context(client, "executive")["tools"]["mcp"] is None)
+
+    # --- Listing MCP services as the admin ----------------------------------------
+
+    class FakeApi:
+        def __init__(self, pages=None, error=None):
+            self.pages, self.error, self.calls = list(pages or []), error, []
+
+        def do(self, method, path, query=None):
+            self.calls.append((method, path, query))
+            if self.error:
+                raise self.error
+            return self.pages.pop(0) if self.pages else {}
+
+    api = FakeApi(pages=[
+        {"mcp_services": [
+            {"name": "mcp-services/system.ai.slack", "comment": "Slack.", "config": {}},
+            {"name": "mcp-services/system.ai.sandbox", "config": {"internal": {}}},
+            {"name": "mcp-services/system.ai.dbsql", "comment": "SQL.", "config": {"internal": {}}},
+        ], "next_page_token": "p2"},
+        {"mcp_services": [{"name": "mcp-services/system.ai.bad name"}, {"name": "mcp-services/system.ai.atlassian"}]},
+    ])
+    listed = agent_settings.list_mcp_services(SimpleNamespace(api_client=api), "system.ai")
+    check("services from every page are listed, by name",
+          [s["service"] for s in listed] == ["system.ai.atlassian", "system.ai.dbsql", "system.ai.slack"])
+    check("the sandbox and names the agent would refuse are left out",
+          not any(s["service"] in ("system.ai.sandbox", "system.ai.bad name") for s in listed))
+    check("Databricks-run services are marked",
+          [s["service"] for s in listed if s["databricks_managed"]] == ["system.ai.dbsql"])
+    check("the schema is the list's parent, and the page token is passed on",
+          api.calls[0][2] == {"parent": "schemas/system.ai"} and api.calls[1][2]["page_token"] == "p2")
+
+    def status_of(call):
+        try:
+            call()
+        except HTTPException as e:
+            return e.status_code, e.detail
+        return None, None
+
+    status, detail = status_of(lambda: agent_settings.list_mcp_services(
+        SimpleNamespace(api_client=FakeApi(error=PermissionDenied("token lacks scopes"))), "system.ai"))
+    check("a refused list answers 403 and names the scope", status == 403 and "unity-catalog" in detail)
+    status, _ = status_of(lambda: agent_settings.mcp_service(
+        SimpleNamespace(api_client=FakeApi(error=NotFound("nope"))), "system.ai.gone"))
+    check("a service the admin can't see answers 404", status == 404)
+
+    # --- Listing Genie spaces as the admin ----------------------------------------
+
+    pages = [
+        SimpleNamespace(spaces=[SimpleNamespace(space_id=SPACE_B, title="Zeta", description="Z."),
+                                SimpleNamespace(space_id="not-hex", title="Odd", description="")],
+                        next_page_token="t2"),
+        SimpleNamespace(spaces=[SimpleNamespace(space_id=SPACE_A, title="alpha", description=None)],
+                        next_page_token=None),
+    ]
+    genie = SimpleNamespace(list_spaces=lambda page_size, page_token: pages.pop(0))
+    spaces = agent_settings.list_genie_spaces(SimpleNamespace(genie=genie))
+    check("Genie spaces from every page are listed by title, skipping odd ids",
+          [(s["title"], s["space_id"]) for s in spaces] == [("alpha", SPACE_A), ("Zeta", SPACE_B)])
+
+    # --- A service's tools come from the agent ------------------------------------
+
+    real_get = agent_settings.requests.get
+    sent = {}
+
+    def fake_get(answer):
+        def get(url, params=None, headers=None, **_kwargs):
+            sent.update(url=url, params=params, headers=headers)
+            return answer
+        return get
+
+    class Answer:
+        def __init__(self, status, body=None):
+            self.status_code, self.body = status, body
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise agent_settings.requests.HTTPError(f"HTTP {self.status_code}")
+
+        def json(self):
+            return self.body
+
+    os.environ["AGENT_APP_URL"] = "http://localhost:8000"
+    try:
+        tools = [{"name": "web_search", "description": "Search.", "read_only": False, "offerable": True}]
+        agent_settings.requests.get = fake_get(Answer(200, {"tools": tools, "problem": None}))
+        got = agent_settings.mcp_service_tools(None, "system.ai.web_search", refresh=True)
+        check("a service's tools are the agent's listing", got["tools"] == tools and got["problem"] is None)
+        check("asked at the agent's MCP route, refreshing on request",
+              sent["url"] == "http://localhost:8000/api/mcp-services/system.ai.web_search/tools"
+              and sent["params"] == {"refresh": "true"})
+        agent_settings.requests.get = fake_get(Answer(404))
+        status, detail = status_of(lambda: agent_settings.mcp_service_tools(None, "system.ai.web_search"))
+        check("an agent without the route says to redeploy it", status == 502 and "Redeploy" in detail)
+    finally:
+        agent_settings.requests.get = real_get
+        os.environ.pop("AGENT_APP_URL", None)
+
+    # --- Saving MCP services ------------------------------------------------------
+
+    real_defaults, real_service = agent_settings.agent_defaults, agent_settings.mcp_service
+    looked_up = []
+    agent_settings.agent_defaults = lambda _token: {"contexts": [{"id": "general"}], "builtin_tools": []}
+    agent_settings.mcp_service = lambda _client, name: looked_up.append(name) or {"service": name}
+    caller = SimpleNamespace(email="admin@x.com")
+
+    def save_mcp(services):
+        return settings_routes.save_context(
+            ContextSettingsUpdate(mcp_services=services), "general", caller, client_with(), None)
+
+    try:
+        save_mcp([{"service": "system.ai.slack", "tools": ["search"], "approve": ["search"]}])
+        stored = agent_settings.read_all()["general"]["tools"]["mcp"]
+        check("a saved MCP service keeps its tools and approvals",
+              stored == [{"service": "system.ai.slack", "tools": ["search"], "approve": ["search"]}])
+        check("each service is read as the admin before it is saved", looked_up == ["system.ai.slack"])
+        status, _ = status_of(lambda: save_mcp([{"service": "system.ai.slack"}, {"service": "system.ai.slack"}]))
+        check("the same service twice is rejected", status == 400)
+        status, _ = status_of(lambda: save_mcp([{"service": "system.ai.sandbox"}]))
+        check("the sandbox is rejected", status == 400)
+        agent_settings.reset("general")
+    finally:
+        agent_settings.agent_defaults, agent_settings.mcp_service = real_defaults, real_service
 finally:
     # The app starts the server to outlive the process, so stop this one explicitly.
     if database._local_server is not None:

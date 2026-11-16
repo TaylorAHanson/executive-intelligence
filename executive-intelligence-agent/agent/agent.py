@@ -20,6 +20,7 @@ from agent.contexts import (
     system_prompt,
 )
 from agent import stores
+from agent.mcp_services import settings_mcp_tools
 from agent.mcps import build_mcp_servers
 
 # Importing the tools package auto-registers every tool module.
@@ -52,7 +53,9 @@ MODEL = resolve_model_service() or "system.ai.claude-sonnet-5-5"
 # Tools that require human approval before they run. Map a tool name to True to allow every decision
 # (approve / edit / reject / respond), or to a config dict to restrict them (see HumanInTheLoopMiddleware).
 # When a listed tool is about to run, the agent pauses and emits an `interrupt` event; the client
-# resumes by sending `resume` with the same session id. Empty this dict to disable approval gating.
+# resumes by sending `resume` with the same session id. Empty this dict to disable approval gating for
+# local tools. MCP services in a context's settings add their own (`McpService.asks_first`): by default
+# every tool the service does not mark read-only waits for approval.
 REQUIRE_APPROVAL = {"send_message": True}
 
 
@@ -139,7 +142,7 @@ async def create_agent_graph(
     settings: Any = None,
     workspace_client_for: Callable[[str], WorkspaceClient] | None = None,
 ):
-    """Build the LangGraph agent: local tools + long-term-memory tools + any MCP tools.
+    """Build the LangGraph agent: local tools, memory tools, Genie spaces and MCP services.
 
     ``actor`` is the identity whose long-term memory the agent reads/writes; it's captured in the
     memory tools' closures (never exposed to the model). The memory tools and the managed
@@ -168,9 +171,13 @@ async def create_agent_graph(
         *settings_genie_tools(context_settings, workspace_client_for),
         *stores.memory_tools_for(actor),
     ]
-    middleware = (
-        [HumanInTheLoopMiddleware(interrupt_on=REQUIRE_APPROVAL)] if REQUIRE_APPROVAL else []
+    # MCP services from settings come last, so one never displaces a tool named above.
+    services = await settings_mcp_tools(
+        context_settings, workspace_client_for, taken=[t.name for t in tools]
     )
+    tools.extend(services.tools)
+    interrupt_on = {**REQUIRE_APPROVAL, **services.approval}
+    middleware = [HumanInTheLoopMiddleware(interrupt_on=interrupt_on)] if interrupt_on else []
     endpoint = model or MODEL
     return create_agent(
         # use_ai_gateway routes to the Unity Catalog AI Gateway (`<host>/ai-gateway/mlflow/v1`), so
@@ -179,7 +186,12 @@ async def create_agent_graph(
             endpoint=endpoint, workspace_client=_app_workspace_client(), use_ai_gateway=True
         ),
         tools=tools,
-        system_prompt=system_prompt(app_context, context_settings, memory=store_status.memory),
+        system_prompt=system_prompt(
+            app_context,
+            context_settings,
+            memory=store_status.memory,
+            unavailable_services=services.unavailable,
+        ),
         middleware=middleware,
         checkpointer=stores.session_saver(),
     )

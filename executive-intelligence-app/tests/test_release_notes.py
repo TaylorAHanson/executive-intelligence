@@ -28,9 +28,10 @@ def check(description: str, condition: bool) -> None:
         print(f"  FAIL {description}")
 
 
-notes = re.sub(r"<!--.*?-->", "", (APP / "RELEASE_NOTES.md").read_text(), flags=re.S)
+# UTF-8 explicitly: the headings contain an em dash, and Windows reads text in its code page by default.
+notes = re.sub(r"<!--.*?-->", "", (APP / "RELEASE_NOTES.md").read_text(encoding="utf-8"), flags=re.S)
 releases = HEADING.findall(notes)
-version = json.loads((APP / "package.json").read_text())["version"]
+version = json.loads((APP / "package.json").read_text(encoding="utf-8"))["version"]
 
 check("there is at least one release", len(releases) > 0)
 check(f"the top release matches package.json ({version})", bool(releases) and releases[0][0] == version)

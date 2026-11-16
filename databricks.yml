@@ -184,16 +184,21 @@ resources:
       # (server/middleware/auth.py, agent_auth_headers). The agent app's proxy
       # forwards the token to the agent only if it already carries every scope
       # the agent's `auth = "user"` tools need, so list those here as well
-      # (`genie` for the Genie tools). Without them the agent sees no user and
-      # answers 401 MCP_USER_AUTH_REQUIRED. A workspace admin must
+      # (`genie` for the Genie tools, `ai-gateway` for the MCP services admins
+      # attach in Settings). Without them the agent sees no user and answers
+      # 401 MCP_USER_AUTH_REQUIRED. `unity-catalog` lets Settings list the MCP
+      # services an admin can attach, as that admin. A workspace admin must
       # enable user authorization for apps before these take effect;
-      # `scripts/preflight.sh` checks that they did.
+      # `scripts/preflight.sh` checks that they did. Adding a scope asks
+      # everyone to consent again the next time they open the app.
       user_api_scopes:
         - sql
         - sql.statement-execution
         - sql.warehouses
         - apps
         - genie
+        - ai-gateway
+        - unity-catalog
 
       permissions:
         # Whoever deploys keeps the ability to manage it.

@@ -51,6 +51,16 @@ export interface GenieSpaceSetting {
   description: string
 }
 
+/** A Unity Catalog MCP service (AI Gateway → MCPs) attached to a context. The agent calls it as the user. */
+export interface McpServiceSetting {
+  /** `catalog.schema.name`, e.g. `system.ai.slack`. */
+  service: string
+  /** null: every tool the service has, including any it adds later. */
+  tools: string[] | null
+  /** Tools that wait for the user's approval. null: every tool the service doesn't mark read-only. */
+  approve: string[] | null
+}
+
 export interface ContextAgentSettings {
   id: string
   label: string
@@ -58,12 +68,15 @@ export interface ContextAgentSettings {
   default_builtin_tools: string[]
   /** The deployment's Genie bindings for this context. */
   default_genie_spaces: GenieSpaceSetting[]
+  default_mcp_services: McpServiceSetting[]
   /** null: the default prompt applies. */
   prompt: string | null
   /** null: the default built-in tools apply. */
   builtin_tools: string[] | null
   /** null: the default Genie spaces apply. */
   genie_spaces: GenieSpaceSetting[] | null
+  /** null: the default MCP services (none) apply. */
+  mcp_services: McpServiceSetting[] | null
   updated_by: string | null
   updated_at: string | null
 }
@@ -78,6 +91,7 @@ export interface ContextAgentSettingsUpdate {
   prompt: string | null
   builtin_tools: string[] | null
   genie_spaces: Omit<GenieSpaceSetting, 'title'>[] | null
+  mcp_services: McpServiceSetting[] | null
 }
 
 export type AgentMessage =
@@ -215,9 +229,51 @@ export const saveAgentSettings = (contextId: string, update: ContextAgentSetting
 export const resetAgentSettings = (contextId: string) =>
   request<{ status: string }>(`/settings/agent/${encodeURIComponent(contextId)}`, { method: 'DELETE' })
 
+export interface GenieSpaceInfo {
+  space_id: string
+  title: string
+  description: string
+}
+
 export const lookupGenieSpace = (spaceId: string) =>
-  request<{ space_id: string; title: string; description: string }>(
-    `/settings/genie-spaces/${encodeURIComponent(spaceId)}`,
+  request<GenieSpaceInfo>(`/settings/genie-spaces/${encodeURIComponent(spaceId)}`)
+
+/** The Genie spaces the signed-in admin can open. */
+export const listGenieSpaces = () => request<{ spaces: GenieSpaceInfo[] }>('/settings/genie-spaces')
+
+export interface McpServiceInfo {
+  service: string
+  comment: string
+  /** Run by Databricks (SQL, Genie, web search) rather than a third party. */
+  databricks_managed: boolean
+}
+
+/** The MCP services in one Unity Catalog schema that the signed-in admin can use. */
+export const listMcpServices = (schema: string) =>
+  request<{ schema: string; services: McpServiceInfo[] }>(
+    `/settings/mcp-services?schema=${encodeURIComponent(schema)}`,
+  )
+
+export interface McpToolInfo {
+  name: string
+  description: string
+  /** The service marks it read-only; by default only these run without asking. */
+  read_only: boolean
+  /** False for a name the model can't use; the agent never offers it. */
+  offerable: boolean
+}
+
+export interface McpServiceTools {
+  service: string
+  tools: McpToolInfo[]
+  /** Why the service listed nothing. `sign_in`: the admin hasn't connected their own account yet. */
+  problem: { sign_in: boolean; detail: string } | null
+}
+
+/** One service's tools as the signed-in admin sees them. `refresh` skips the agent's cache. */
+export const listMcpServiceTools = (service: string, refresh = false) =>
+  request<McpServiceTools>(
+    `/settings/mcp-services/${encodeURIComponent(service)}/tools${refresh ? '?refresh=true' : ''}`,
   )
 
 /** Answer a paused approval: one decision per pending action, in order. */
